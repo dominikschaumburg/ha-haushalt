@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.3.1
+
+- Aufgabenansicht: Kategorien und Aufgaben sind nach Häufigkeit sortiert, das am häufigsten Erledigte steht oben. „Jetzt dran“ und „Demnächst“ bleiben nach Dringlichkeit sortiert.
+
 ## 1.3.0
 
 - Lernender Aufwand: Beim Abhaken wird der Median der letzten 10 Einträge vorgeschlagen (ab 3 Einträgen seit der letzten Änderung des Standards). Der Aufgaben-Editor zeigt den gelernten Wert und kann ihn als Standard übernehmen.

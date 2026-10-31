@@ -165,9 +165,17 @@ async function renderTasks(el) {
     .sort((a, b) => due(a).diff - due(b).diff);
   const soon = active.filter((t) => due(t)?.status === "soon").sort((a, b) => due(a).diff - due(b).diff);
   const shown = new Set([...urgent, ...soon].map((t) => t.id));
-  const groups = S.categories.map((c) => ({ c, items: active.filter((t) => t.category_id === c.id && !shown.has(t.id)) }));
-  const loose = active.filter((t) => !category(t.category_id) && !shown.has(t.id));
-  if (loose.length) groups.push({ c: { name: "Sonstiges", icon: "✨" }, items: loose });
+  // Häufig Erledigtes nach oben: Kategorien nach Summe, Aufgaben nach Anzahl (bei Gleichstand die eigene Reihenfolge)
+  const byCount = (a, b) => b.count - a.count;
+  const groups = S.categories.map((c) => {
+    const all = active.filter((t) => t.category_id === c.id);
+    return { c, total: all.reduce((n, t) => n + t.count, 0), items: all.filter((t) => !shown.has(t.id)).sort(byCount) };
+  });
+  const loose = active.filter((t) => !category(t.category_id));
+  if (loose.length) {
+    groups.push({ c: { name: "Sonstiges", icon: "✨" }, total: loose.reduce((n, t) => n + t.count, 0), items: loose.filter((t) => !shown.has(t.id)).sort(byCount) });
+  }
+  groups.sort((a, b) => b.total - a.total);
 
   el.innerHTML = `
     ${weekCard(week)}
