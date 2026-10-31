@@ -394,7 +394,40 @@ class Store:
             "categories": self.categories(),
             "tasks": self.q("SELECT * FROM tasks ORDER BY id"),
             "completions": self.completions(include_deleted=True),
+            "audit": self.q("SELECT * FROM audit ORDER BY id"),
         }
+
+    def import_(self, data, actor):
+        """Ersetzt den gesamten Bestand durch einen Export (IDs bleiben erhalten)."""
+        tables = {
+            "persons": ("id", "name", "ha_user_id", "color", "active", "created_at"),
+            "categories": ("id", "name", "icon", "sort"),
+            "tasks": ("id", "name", "icon", "category_id", "minutes", "interval_days", "active", "sort", "created_at"),
+            "completions": ("id", "task_id", "done_at", "minutes", "note", "created_at", "created_by",
+                            "deleted_at", "deleted_by"),
+            "audit": ("id", "at", "actor", "action", "ref", "data"),
+        }
+        for key in ("persons", "categories", "tasks", "completions"):
+            if not isinstance(data.get(key), list):
+                raise ApiError(400, f"Export unvollständig: {key} fehlt")
+        with self.lock:
+            self.db.execute("BEGIN")
+            try:
+                for table in ("completion_persons", "completions", "tasks", "categories", "persons", "audit"):
+                    self.db.execute(f"DELETE FROM {table}")
+                for table, cols in tables.items():
+                    for row in data.get(table) or []:
+                        self.db.execute(f"INSERT INTO {table} ({', '.join(cols)}) VALUES ({', '.join('?' * len(cols))})",
+                                        tuple(row.get(c) for c in cols))
+                for c in data["completions"]:
+                    for pid in c.get("person_ids") or []:
+                        self.db.execute("INSERT INTO completion_persons VALUES (?, ?)", (c["id"], pid))
+                self.db.execute("COMMIT")
+            except Exception:
+                self.db.execute("ROLLBACK")
+                raise
+        self.audit(actor, "import", None, {k: len(data.get(k) or []) for k in tables})
+        return {k: len(data.get(k) or []) for k in tables}
 
 
 # ---------------------------------------------------------------- Home Assistant
@@ -648,6 +681,11 @@ class Handler(BaseHTTPRequestHandler):
 
         if head == "export" and method == "GET":
             return s.export()
+
+        if head == "import" and method == "POST":
+            result = s.import_(self.body(), actor)
+            self.after_change()
+            return result
 
         raise ApiError(404, "Unbekannter Pfad")
 

@@ -655,7 +655,7 @@ function renderSettings(el) {
     <section class="card">
       <h2>Daten</h2>
       <p class="muted">Alle Einträge liegen in einer SQLite-Datenbank im App-Ordner und sind Teil der Home-Assistant-Backups. Gelöschte Einträge bleiben erhalten und lassen sich im Verlauf wiederherstellen.</p>
-      <div class="row-btns"><button class="btn ghost" data-export="json">Export JSON</button><button class="btn ghost" data-export="csv">Export CSV</button></div>
+      <div class="row-btns"><button class="btn ghost" data-export="json">Export JSON</button><button class="btn ghost" data-export="csv">Export CSV</button><label class="btn ghost">Import JSON<input type="file" accept=".json,application/json" data-import hidden></label></div>
     </section>`;
 
   el.querySelectorAll("[data-person]").forEach((row) => {
@@ -675,6 +675,19 @@ function renderSettings(el) {
   $("[data-add-cat]", el).addEventListener("click", () => openCategoryEditor(null));
   el.querySelectorAll("[data-edit-cat]").forEach((b) => b.addEventListener("click", () => openCategoryEditor(category(+b.dataset.editCat))));
   el.querySelectorAll("[data-export]").forEach((b) => b.addEventListener("click", () => exportData(b.dataset.export)));
+  $("[data-import]", el).addEventListener("change", async (e) => {
+    const file = e.target.files[0];
+    e.target.value = "";
+    if (!file) return;
+    try {
+      const data = JSON.parse(await file.text());
+      if (!confirm(`Alle aktuellen Daten durch den Export vom ${new Date(data.exported_at).toLocaleString("de-DE")} ersetzen? (${data.completions?.length ?? 0} Einträge)`)) return;
+      const r = await api("import", { method: "POST", body: data });
+      toast(`Import fertig: ${r.completions} Einträge, ${r.tasks} Aufgaben`);
+      await loadState();
+      render();
+    } catch (err) { fail(err); }
+  });
 }
 
 function taskSettingRow(t) {
