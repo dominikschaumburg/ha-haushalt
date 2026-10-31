@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.1.1
+
+- Seitenleisten-Eintrag auch für Benutzer ohne Admin-Rechte.
+
 ## 1.1.0
 
 - Import eines JSON-Exports unter Einstellungen → Daten (ersetzt den gesamten Bestand, z. B. für Umzüge). Der Export enthält jetzt auch das Änderungsprotokoll.

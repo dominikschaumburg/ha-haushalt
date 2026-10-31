@@ -1,5 +1,5 @@
 name: Haushalt
-version: "1.1.0"
+version: "1.1.1"
 slug: haushalt
 description: Hausarbeit abhaken, fair aufteilen und als Heatmaps und Trends auswerten
 url: https://github.com/dominikschaumburg/ha-haushalt
@@ -11,6 +11,7 @@ ingress: true
 ingress_port: 8099
 panel_icon: mdi:broom
 panel_title: Haushalt
+panel_admin: false
 homeassistant_api: true
 backup: hot
 options:
