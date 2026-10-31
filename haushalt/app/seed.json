@@ -1,0 +1,38 @@
+{
+  "categories": [
+    {"name": "Küche", "icon": "🍳"},
+    {"name": "Putzen", "icon": "🧽"},
+    {"name": "Wäsche", "icon": "🧺"},
+    {"name": "Müll & Entsorgung", "icon": "🗑️"},
+    {"name": "Einkauf & Kochen", "icon": "🛒"},
+    {"name": "Pflanzen & Ordnung", "icon": "🪴"}
+  ],
+  "tasks": [
+    {"name": "Kochen", "icon": "🍲", "category": "Einkauf & Kochen", "minutes": 40},
+    {"name": "Einkaufen", "icon": "🛒", "category": "Einkauf & Kochen", "minutes": 45},
+    {"name": "Abwasch nach dem Kochen", "icon": "🍽️", "category": "Küche", "minutes": 15},
+    {"name": "Geschirrspüler ausräumen", "icon": "🫧", "category": "Küche", "minutes": 7},
+    {"name": "Küche putzen", "icon": "🧼", "category": "Küche", "minutes": 25, "interval_days": 7},
+    {"name": "Kaffeemaschine reinigen", "icon": "☕", "category": "Küche", "minutes": 15, "interval_days": 14},
+    {"name": "Wasserkocher entkalken", "icon": "🫖", "category": "Küche", "minutes": 10, "interval_days": 30},
+    {"name": "Mikrowelle reinigen", "icon": "📟", "category": "Küche", "minutes": 10, "interval_days": 30},
+    {"name": "Backofen reinigen", "icon": "🔥", "category": "Küche", "minutes": 45, "interval_days": 90},
+    {"name": "Bad putzen", "icon": "🛁", "category": "Putzen", "minutes": 40, "interval_days": 7},
+    {"name": "Wischen", "icon": "🪣", "category": "Putzen", "minutes": 30, "interval_days": 14},
+    {"name": "Wohnung saugen", "icon": "🧹", "category": "Putzen", "minutes": 25},
+    {"name": "Staubsauger leeren", "icon": "🤖", "category": "Putzen", "minutes": 3, "interval_days": 7},
+    {"name": "Staub wischen", "icon": "🪶", "category": "Putzen", "minutes": 20, "interval_days": 14},
+    {"name": "Fenster putzen", "icon": "🪟", "category": "Putzen", "minutes": 60, "interval_days": 90},
+    {"name": "Wäsche waschen", "icon": "🌀", "category": "Wäsche", "minutes": 10},
+    {"name": "Wäsche aufhängen", "icon": "👕", "category": "Wäsche", "minutes": 15},
+    {"name": "Wäsche abhängen und zusammenlegen", "icon": "🧺", "category": "Wäsche", "minutes": 20},
+    {"name": "Bett neu beziehen", "icon": "🛏️", "category": "Wäsche", "minutes": 15, "interval_days": 14},
+    {"name": "Restmüll runterbringen", "icon": "🗑️", "category": "Müll & Entsorgung", "minutes": 5, "interval_days": 4},
+    {"name": "Gelben Sack runterbringen", "icon": "🟨", "category": "Müll & Entsorgung", "minutes": 5, "interval_days": 7},
+    {"name": "Altpapier runterbringen", "icon": "📦", "category": "Müll & Entsorgung", "minutes": 5, "interval_days": 7},
+    {"name": "Altglas wegbringen", "icon": "🍾", "category": "Müll & Entsorgung", "minutes": 15, "interval_days": 21},
+    {"name": "Pfand wegbringen", "icon": "♻️", "category": "Müll & Entsorgung", "minutes": 15, "interval_days": 14},
+    {"name": "Pflanzen gießen", "icon": "🪴", "category": "Pflanzen & Ordnung", "minutes": 10, "interval_days": 4},
+    {"name": "Aufräumen", "icon": "📚", "category": "Pflanzen & Ordnung", "minutes": 20}
+  ]
+}

@@ -1,0 +1,6 @@
+configuration:
+  sensors:
+    name: Sensoren in Home Assistant
+    description: Legt sensor.haushalt_faellig und je Person sensor.haushalt_<name>_7_tage an.
+  log_level:
+    name: Log-Level

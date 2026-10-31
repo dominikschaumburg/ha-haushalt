@@ -1,0 +1,6 @@
+configuration:
+  sensors:
+    name: Sensors in Home Assistant
+    description: Publishes sensor.haushalt_faellig and sensor.haushalt_<name>_7_tage per person.
+  log_level:
+    name: Log level
