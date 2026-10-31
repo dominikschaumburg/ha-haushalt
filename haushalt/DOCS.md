@@ -45,7 +45,7 @@ automation:
 
 ## Aus Automationen abhaken
 
-Home Assistant kann Einträge über einen `rest_command` anlegen, etwa per NFC-Tag am Mülleimer. Aufgabe und Person werden per Namen angegeben. Den Hostnamen der App findest du unter **Einstellungen → Apps → Haushalt** (Feld „Hostname“), z. B. `a1b2c3d4-haushalt`.
+Home Assistant kann Einträge über einen `rest_command` anlegen, etwa per NFC-Tag am Mülleimer. Aufgabe und Person werden per Namen angegeben. Den Hostnamen der App findest du unter **Einstellungen → Apps → Haushalt** (Feld „Hostname“): `local-haushalt` bei lokaler Installation, sonst z. B. `a1b2c3d4-haushalt`.
 
 ```yaml
 rest_command:

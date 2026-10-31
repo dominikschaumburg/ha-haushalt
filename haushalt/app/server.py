@@ -437,11 +437,10 @@ class HomeAssistant:
         for t in self.store.tasks():
             if not t["active"] or not t["interval_days"]:
                 continue
-            if t["last_done"]:
-                last = datetime.fromisoformat(t["last_done"].replace("Z", "+00:00")).astimezone().date()
-                next_due = last + timedelta(days=t["interval_days"])
-            else:
-                next_due = local_today
+            if not t["last_done"]:  # Rhythmus beginnt erst mit dem ersten Abhaken
+                continue
+            last = datetime.fromisoformat(t["last_done"].replace("Z", "+00:00")).astimezone().date()
+            next_due = last + timedelta(days=t["interval_days"])
             if next_due <= local_today:
                 due.append({"name": t["name"], "since_days": (local_today - next_due).days})
         due.sort(key=lambda d: -d["since_days"])

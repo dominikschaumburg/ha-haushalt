@@ -214,7 +214,8 @@ main { max-width: 960px; margin: 0 auto; padding: 16px 16px 96px; }
 .status.overdue { color: var(--critical); }
 .status.due { color: var(--warning); }
 .status.soon { color: var(--soon); }
-.status.ok { color: var(--muted); font-weight: 400; }
+.status.ok, .status.new { color: var(--muted); font-weight: 400; }
+.status.new i { display: none; }
 .status.ok i { background: var(--good); }
 
 .check {

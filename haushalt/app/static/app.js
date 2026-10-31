@@ -85,7 +85,7 @@ const intervalName = (n) => INTERVALS.find(([d]) => d === n)?.[1] || `Alle ${n} 
 
 function due(t) {
   if (!t.interval_days || !t.active) return null;
-  if (!t.last_done) return { status: "due", diff: 0, frac: 1, label: "Noch nie erledigt" };
+  if (!t.last_done) return { status: "new", diff: Infinity, frac: 0, label: "Rhythmus startet beim ersten Abhaken" };
   const last = new Date(t.last_done);
   const elapsed = daysBetween(last, new Date());
   const diff = t.interval_days - elapsed;
