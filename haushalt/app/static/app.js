@@ -3,7 +3,7 @@ import { esc, lineChart, heatmap, heatLegend, groupedColumns, splitBar, dayKey, 
 // ---------------------------------------------------------------- Zustand & API
 
 const S = {
-  me: null, persons: [], categories: [], tasks: [],
+  me: null, persons: [], categories: [], tasks: [], reaction_set: [],
   view: new URLSearchParams(location.search).get("v") || localGet("view") || "tasks",
   search: "",
   history: { days: 30, person: "all", category: "all", deleted: false, rows: [] },
@@ -153,7 +153,11 @@ function fail(e) {
 // ---------------------------------------------------------------- Aufgaben
 
 async function renderTasks(el) {
-  const week = await api(`completions?since=${monday(new Date()).toISOString()}`);
+  const weekStart = monday(new Date());
+  const recentStart = new Date(Date.now() - 3 * DAY);
+  const rows = await api(`completions?since=${(recentStart < weekStart ? recentStart : weekStart).toISOString()}`);
+  const week = rows.filter((c) => new Date(c.done_at) >= weekStart);
+  const recent = rows.filter((c) => new Date(c.done_at) >= recentStart);
   const q = S.search.trim().toLowerCase();
   const active = S.tasks.filter((t) => t.active && (!q || t.name.toLowerCase().includes(q)));
   const urgent = active.filter((t) => ["overdue", "due"].includes(due(t)?.status))
@@ -166,6 +170,7 @@ async function renderTasks(el) {
 
   el.innerHTML = `
     ${weekCard(week)}
+    ${thanksCard(recent)}
     <div class="search"><input type="search" placeholder="Aufgabe suchen …" value="${esc(S.search)}" aria-label="Aufgabe suchen"></div>
     ${urgent.length ? section("Jetzt dran", urgent, "Sortiert nach Dringlichkeit") : ""}
     ${soon.length ? section("Demnächst", soon) : ""}
@@ -179,6 +184,13 @@ async function renderTasks(el) {
     const pos = input.selectionStart;
     renderTasks(el).then(() => { const i = $(".search input", el); i.focus(); i.setSelectionRange(pos, pos); });
   });
+  el.querySelectorAll("[data-thanks] [data-react]").forEach((b) => b.addEventListener("click", async () => {
+    const row = b.closest("[data-thanks]");
+    row.classList.add("sent");
+    await react(+row.dataset.thanks, b.dataset.react);
+    setTimeout(() => renderTasks(el), 300);
+  }));
+  $("[data-goto-history]", el)?.addEventListener("click", () => go("history"));
   el.querySelectorAll("[data-check]").forEach((b) => b.addEventListener("click", () => quickDone(+b.dataset.check, b)));
   el.querySelectorAll("[data-open]").forEach((b) => b.addEventListener("click", () => openLog({ taskId: +b.dataset.open })));
 }
@@ -191,7 +203,78 @@ function weekCard(rows) {
     <div class="week-head"><h2>Diese Woche</h2><span class="muted">${plural(rows.length, "Aufgabe", "Aufgaben")} · ${fmtMin(total)}</span></div>
     ${splitBar(parts, { height: 8 })}
     <div class="week-people">${parts.map((p, i) => `<div>${avatar(activePersons()[i], "sm")}<span>${esc(p.name)}</span><b>${fmtMin(p.value)}</b></div>`).join("")}</div>
+    ${receivedLine(rows)}
   </section>`;
+}
+
+function receivedLine(rows) {
+  if (!S.me) return "";
+  const got = rows.filter((c) => c.person_ids.includes(S.me.id)).flatMap((c) => c.reactions);
+  if (!got.length) return "";
+  const from = [...new Set(got.map((r) => person(r.person_id)?.name).filter(Boolean))];
+  return `<div class="received">${reactSummary(got)}<span>${got.length === 1 ? "Ein Danke" : `${got.length}× Danke`} diese Woche von ${esc(from.join(" & "))}</span></div>`;
+}
+
+/** Reaktionen gruppiert nach Emoji, z. B. „❤️ 2 🙏“. */
+function reactSummary(list, { cid, mine = false } = {}) {
+  const groups = new Map();
+  list.forEach((r) => groups.set(r.emoji, [...(groups.get(r.emoji) || []), r.person_id]));
+  return [...groups.entries()].map(([emoji, ids]) => {
+    const names = ids.map((id) => person(id)?.name).join(", ");
+    const pressed = S.me && ids.includes(S.me.id);
+    const attrs = cid && !mine ? `data-react-toggle="${emoji}" aria-pressed="${pressed}"` : "disabled";
+    return `<button type="button" class="react-chip" ${attrs} title="${esc(names)}">${emoji}${ids.length > 1 ? `<span>${ids.length}</span>` : ""}</button>`;
+  }).join("");
+}
+
+function thanksCard(rows) {
+  if (!S.me || !S.reaction_set.length) return "";
+  const all = rows.filter((c) => !c.person_ids.includes(S.me.id) && !c.reactions.some((r) => r.person_id === S.me.id));
+  const open = all.slice(0, 3);
+  if (!open.length) return "";
+  return `<section class="card thanks"><div class="card-head"><h2>Danke sagen</h2><span class="muted">Das haben die anderen erledigt</span></div>
+    ${open.map((c) => {
+      const t = task(c.task_id) || {};
+      const d = new Date(c.done_at);
+      return `<div class="thanks-row" data-thanks="${c.id}">
+        <span class="avatars">${c.person_ids.map((id) => avatar(person(id), "sm")).join("")}</span>
+        <span class="thanks-text"><b>${esc(c.person_ids.map((id) => person(id)?.name).join(" & "))}</b> ${esc(t.icon)} ${esc(t.name)}<span class="muted"> · ${relDay(d)}, ${timeStr(d)}</span></span>
+        <span class="react-row">${S.reaction_set.map((e) => `<button class="react-pick" data-react="${e}" aria-label="Mit ${e} danken">${e}</button>`).join("")}</span>
+      </div>`;
+    }).join("")}
+    ${all.length > open.length ? `<button class="btn ghost sm more-thanks" data-goto-history>${all.length - open.length} weitere im Verlauf</button>` : ""}
+  </section>`;
+}
+
+async function react(cid, emoji) {
+  try {
+    const c = await api(`completions/${cid}/reactions`, { method: "POST", body: { emoji } });
+    const mine = c.reactions.some((r) => r.person_id === S.me.id && r.emoji === emoji);
+    if (mine) toast(`${emoji} an ${esc(c.person_ids.map((id) => person(id)?.name).join(" & "))} geschickt`);
+    return c;
+  } catch (e) { fail(e); }
+}
+
+let pickerEl;
+function openPicker(btn, onPick) {
+  closePicker();
+  pickerEl = document.createElement("div");
+  pickerEl.className = "picker";
+  pickerEl.innerHTML = S.reaction_set.map((e) => `<button class="react-pick" data-pick="${e}">${e}</button>`).join("");
+  document.body.appendChild(pickerEl);
+  const r = btn.getBoundingClientRect();
+  const w = pickerEl.offsetWidth;
+  pickerEl.style.left = `${Math.max(8, Math.min(window.innerWidth - w - 8, r.right - w))}px`;
+  pickerEl.style.top = `${r.bottom + 6 + pickerEl.offsetHeight > window.innerHeight ? r.top - pickerEl.offsetHeight - 6 : r.bottom + 6}px`;
+  pickerEl.addEventListener("click", (e) => {
+    const b = e.target.closest("[data-pick]");
+    if (b) { closePicker(); onPick(b.dataset.pick); }
+  });
+  setTimeout(() => document.addEventListener("click", closePicker, { once: true }), 0);
+}
+function closePicker() {
+  pickerEl?.remove();
+  pickerEl = null;
 }
 
 function section(title, items, hint = "") {
@@ -419,6 +502,12 @@ async function renderHistory(el) {
   $("[data-more]", el).addEventListener("click", () => { H.days += 60; renderHistory(el); });
   el.querySelectorAll("[data-entry]").forEach((r) => r.addEventListener("click", (e) => {
     const c = H.rows.find((x) => x.id === +r.dataset.entry);
+    const toggle = e.target.closest("[data-react-toggle]");
+    if (toggle) return react(c.id, toggle.dataset.reactToggle).then(() => renderHistory(el));
+    if (e.target.closest("[data-react-open]")) {
+      e.stopPropagation();
+      return openPicker(e.target.closest("[data-react-open]"), (emoji) => react(c.id, emoji).then(() => renderHistory(el)));
+    }
     if (e.target.closest("[data-del]")) return removeEntry(c);
     if (e.target.closest("[data-undel]")) {
       return api(`completions/${c.id}/restore`, { method: "POST" }).then(loadState).then(render).then(() => toast("Eintrag wiederhergestellt"));
@@ -430,14 +519,16 @@ async function renderHistory(el) {
 function entryRow(c) {
   const t = task(c.task_id) || { name: "Gelöschte Aufgabe", icon: "?" };
   const d = new Date(c.done_at);
+  const mine = !S.me || c.person_ids.includes(S.me.id);
   return `<div class="entry ${c.deleted_at ? "deleted" : ""}" data-entry="${c.id}" role="button" tabindex="0">
     <span class="time">${timeStr(d)}</span>
     <span class="ticon sm">${esc(t.icon)}</span>
-    <span class="ename">${esc(t.name)}${c.note ? `<span class="muted"> · ${esc(c.note)}</span>` : ""}</span>
+    <span class="ename"><span class="ename-t">${esc(t.name)}${c.note ? `<span class="muted"> · ${esc(c.note)}</span>` : ""}</span>${reactSummary(c.reactions, { cid: c.id, mine })}</span>
     <span class="avatars">${c.person_ids.map((id) => avatar(person(id), "sm")).join("")}</span>
     <span class="emin">${fmtMin(c.minutes)}</span>
-    ${c.deleted_at ? `<button class="icon-btn" data-undel title="Wiederherstellen" aria-label="Wiederherstellen">↺</button>`
-      : `<button class="icon-btn" data-del title="Löschen" aria-label="Löschen">🗑</button>`}
+    <span class="actions">${!mine && !c.deleted_at && S.me ? `<button class="icon-btn react-add" data-react-open title="Danke sagen" aria-label="Danke sagen">♡</button>` : ""}${c.deleted_at
+      ? `<button class="icon-btn" data-undel title="Wiederherstellen" aria-label="Wiederherstellen">↺</button>`
+      : `<button class="icon-btn" data-del title="Löschen" aria-label="Löschen">🗑</button>`}</span>
   </div>`;
 }
 
@@ -489,6 +580,8 @@ async function renderStats(el) {
         <div class="tile-value">${metric === "time" ? fmtHours(v) : fmtCount(v)}</div>
         <div class="muted">${metric === "time" ? `${Math.round(count)} Aufgaben` : fmtHours(shares(rows, "time").get(p.id) || 0)} · Ø ${fmt(v / Math.max(1, span / 7))} pro Woche</div>
         ${delta}
+        ${(() => { const n = rows.filter((c) => c.person_ids.includes(p.id)).reduce((a, c) => a + c.reactions.length, 0);
+          return n ? `<div class="thanks-count">❤️ ${n}× Danke bekommen</div>` : ""; })()}
       </div>`;
     }).join("")}</section>
     <section class="card">

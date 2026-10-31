@@ -6,6 +6,8 @@
 
 Der farbige Ring um das Symbol zeigt, wie viel vom Rhythmus abgelaufen ist: grün im Plan, gelb bald bzw. heute fällig, rot überfällig. Aufgaben ohne Rhythmus haben keinen Ring.
 
+**Danke sagen**: Was die anderen in den letzten drei Tagen erledigt haben und worauf du noch nicht reagiert hast, steht oben auf der Aufgabenseite. Ein Tipp auf ein Emoji schickt ein Danke. Im Verlauf geht das über das Herz neben dem Eintrag; ein Tipp auf eine eigene Reaktion nimmt sie zurück. Erhaltene Danke stehen in der Wochenübersicht und in der Statistik.
+
 **Verlauf**: Alle Einträge nach Tagen. Antippen zum Bearbeiten, Papierkorb zum Löschen. Mit „Gelöschte zeigen“ lassen sich gelöschte Einträge wiederherstellen.
 
 **Statistik**: Zeitraum (4 Wochen, 3 Monate, 12 Monate, Gesamt) und Maß (Zeit oder Anzahl) oben wählen. Hover oder Tippen auf Diagramme zeigt Details. „Wer macht was?“ lässt sich je Kategorie aufklappen.
@@ -24,6 +26,25 @@ Der farbige Ring um das Symbol zeigt, wie viel vom Rhythmus abgelaufen ist: grü
 - `sensor.haushalt_faellig`: Anzahl fälliger und überfälliger Aufgaben; Attribut `aufgaben` enthält die Namen.
 - `sensor.haushalt_<name>_7_tage`: Minuten pro Person in den letzten 7 Tagen; Attribute `aufgaben` und `anteil` (in %).
 - Ereignis `haushalt_erledigt` mit `aufgabe`, `personen`, `minuten`, `zeitpunkt` bei jedem neuen Eintrag.
+
+- Ereignis `haushalt_reaktion` mit `von`, `emoji`, `aufgabe`, `fuer` (Namen), `ha_user_ids` und `zeitpunkt`, wenn jemand Danke sagt.
+
+Beispiel: Push-Nachricht, wenn sich jemand bedankt (Benachrichtigungsdienst anpassen).
+
+```yaml
+automation:
+  - alias: Haushalt-Danke an Sarah
+    triggers:
+      - trigger: event
+        event_type: haushalt_reaktion
+    conditions:
+      - condition: template
+        value_template: "{{ 'Sarah' in trigger.event.data.fuer }}"
+    actions:
+      - action: notify.mobile_app_iphone_von_sarah
+        data:
+          message: "{{ trigger.event.data.von }} sagt {{ trigger.event.data.emoji }} für „{{ trigger.event.data.aufgabe }}“"
+```
 
 Beispiel: abends erinnern, wenn etwas überfällig ist.
 

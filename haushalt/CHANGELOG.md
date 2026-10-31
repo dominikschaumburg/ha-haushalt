@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.2.0
+
+- Danke sagen: Emoji-Reaktionen auf Aufgaben, die andere erledigt haben, mit eigener Karte auf der Aufgabenseite, Anzeige im Verlauf, in der Wochenübersicht und in der Statistik.
+- Neues Ereignis `haushalt_reaktion` für Benachrichtigungen.
+- Reaktionen sind Teil von Export und Import.
+
 ## 1.1.1
 
 - Seitenleisten-Eintrag auch für Benutzer ohne Admin-Rechte.

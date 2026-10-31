@@ -24,6 +24,7 @@ SUPERVISOR_TOKEN = os.environ.get("SUPERVISOR_TOKEN")
 STATIC = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static")
 SEED = os.path.join(os.path.dirname(os.path.abspath(__file__)), "seed.json")
 # 172.30.32.2 = Ingress-Proxy des Supervisors, 172.30.32.1 = Home Assistant Core (rest_command)
+REACTIONS = ("❤️", "🙏", "👏", "🎉", "💪", "🤩")
 INGRESS_IP = "172.30.32.2"
 CORE_IP = "172.30.32.1"
 
@@ -116,6 +117,13 @@ CREATE TABLE IF NOT EXISTS audit (
   action TEXT NOT NULL,
   ref INTEGER,
   data TEXT
+);
+CREATE TABLE IF NOT EXISTS reactions (
+  completion_id INTEGER NOT NULL REFERENCES completions(id) ON DELETE CASCADE,
+  person_id INTEGER NOT NULL REFERENCES persons(id),
+  emoji TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  PRIMARY KEY (completion_id, person_id, emoji)
 );
 CREATE INDEX IF NOT EXISTS idx_completions_done ON completions(done_at);
 CREATE INDEX IF NOT EXISTS idx_completions_task ON completions(task_id);
@@ -293,6 +301,17 @@ class Store:
                 out.setdefault(r["completion_id"], []).append(r["person_id"])
         return out
 
+    def _reactions_for(self, completion_ids):
+        out = {}
+        for i in range(0, len(completion_ids), 500):
+            chunk = completion_ids[i:i + 500]
+            if not chunk:
+                continue
+            for r in self.q(f"SELECT * FROM reactions WHERE completion_id IN ({', '.join('?' * len(chunk))})"
+                            " ORDER BY created_at", chunk):
+                out.setdefault(r.pop("completion_id"), []).append(r)
+        return out
+
     def completions(self, since=None, until=None, include_deleted=False, task_id=None, limit=None):
         where, args = [], []
         if since:
@@ -313,9 +332,12 @@ class Store:
         if limit:
             sql += f" LIMIT {int(limit)}"
         rows = self.q(sql, args)
-        persons = self._persons_for([r["id"] for r in rows])
+        ids = [r["id"] for r in rows]
+        persons = self._persons_for(ids)
+        reactions = self._reactions_for(ids)
         for r in rows:
             r["person_ids"] = persons.get(r["id"], [])
+            r["reactions"] = reactions.get(r["id"], [])
         return rows
 
     def completion(self, cid):
@@ -323,6 +345,7 @@ class Store:
         if not rows:
             raise ApiError(404, "Eintrag nicht gefunden")
         rows[0]["person_ids"] = self._persons_for([cid]).get(cid, [])
+        rows[0]["reactions"] = self._reactions_for([cid]).get(cid, [])
         return rows[0]
 
     def _check_persons(self, person_ids):
@@ -387,6 +410,24 @@ class Store:
         self.audit(actor, "completion.restore", cid)
         return self.completion(cid)
 
+    def toggle_reaction(self, cid, person, emoji):
+        """Setzt oder entfernt eine Reaktion; gibt True zurück, wenn sie neu ist."""
+        if emoji not in REACTIONS:
+            raise ApiError(400, "Unbekannte Reaktion")
+        c = self.completion(cid)
+        if c["deleted_at"]:
+            raise ApiError(400, "Eintrag ist gelöscht")
+        if person["id"] in c["person_ids"]:
+            raise ApiError(400, "Auf eigene Aufgaben kann man nicht reagieren")
+        with self.lock:
+            cur = self.x("DELETE FROM reactions WHERE completion_id = ? AND person_id = ? AND emoji = ?",
+                         (cid, person["id"], emoji))
+            added = cur.rowcount == 0
+            if added:
+                self.x("INSERT INTO reactions VALUES (?, ?, ?, ?)", (cid, person["id"], emoji, now_iso()))
+        self.audit(person["name"], "reaction.add" if added else "reaction.remove", cid, {"emoji": emoji})
+        return added, self.completion(cid)
+
     def export(self):
         return {
             "exported_at": now_iso(),
@@ -395,6 +436,7 @@ class Store:
             "tasks": self.q("SELECT * FROM tasks ORDER BY id"),
             "completions": self.completions(include_deleted=True),
             "audit": self.q("SELECT * FROM audit ORDER BY id"),
+            "reactions": self.q("SELECT * FROM reactions ORDER BY created_at"),
         }
 
     def import_(self, data, actor):
@@ -406,6 +448,7 @@ class Store:
             "completions": ("id", "task_id", "done_at", "minutes", "note", "created_at", "created_by",
                             "deleted_at", "deleted_by"),
             "audit": ("id", "at", "actor", "action", "ref", "data"),
+            "reactions": ("completion_id", "person_id", "emoji", "created_at"),
         }
         for key in ("persons", "categories", "tasks", "completions"):
             if not isinstance(data.get(key), list):
@@ -413,7 +456,7 @@ class Store:
         with self.lock:
             self.db.execute("BEGIN")
             try:
-                for table in ("completion_persons", "completions", "tasks", "categories", "persons", "audit"):
+                for table in ("reactions", "completion_persons", "completions", "tasks", "categories", "persons", "audit"):
                     self.db.execute(f"DELETE FROM {table}")
                 for table, cols in tables.items():
                     for row in data.get(table) or []:
@@ -619,7 +662,8 @@ class Handler(BaseHTTPRequestHandler):
         rid = int(rest[0]) if rest and rest[0].isdigit() else None
 
         if head == "state" and method == "GET":
-            return {"me": me, "persons": s.persons(), "categories": s.categories(), "tasks": s.tasks()}
+            return {"me": me, "persons": s.persons(), "categories": s.categories(), "tasks": s.tasks(),
+                    "reaction_set": list(REACTIONS)}
 
         if head == "completions":
             if method == "GET":
@@ -635,6 +679,14 @@ class Handler(BaseHTTPRequestHandler):
                     data["person_ids"] = [me["id"]]
                 result = s.create_completion(data, actor)
                 self.after_change(result)
+                return result
+            if method == "POST" and rid and rest[1:] == ["reactions"]:
+                if not me:
+                    raise ApiError(400, "Reaktionen nur für angemeldete Personen")
+                emoji = self.body().get("emoji")
+                added, result = s.toggle_reaction(rid, me, emoji)
+                if added:
+                    self.after_reaction(me, emoji, result)
                 return result
             if method == "POST" and rid and rest[1:] == ["restore"]:
                 result = s.restore_completion(rid, actor)
@@ -704,6 +756,17 @@ class Handler(BaseHTTPRequestHandler):
             except KeyError as e:
                 raise ApiError(400, f"Person {e.args[0]!r} nicht gefunden")
         return data
+
+    def after_reaction(self, me, emoji, completion):
+        task = next((t for t in self.store.tasks() if t["id"] == completion["task_id"]), {})
+        names = {p["id"]: p["name"] for p in self.store.persons()}
+        threading.Thread(target=self.ha.fire, daemon=True, args=("haushalt_reaktion", {
+            "von": me["name"], "emoji": emoji, "aufgabe": task.get("name"),
+            "fuer": [names.get(i) for i in completion["person_ids"]],
+            "ha_user_ids": [p["ha_user_id"] for p in self.store.persons()
+                            if p["id"] in completion["person_ids"] and p["ha_user_id"]],
+            "zeitpunkt": completion["done_at"],
+        })).start()
 
     def after_change(self, completion=None):
         self.ha.wake.set()
