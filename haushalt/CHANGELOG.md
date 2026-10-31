@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.3.0
+
+- Lernender Aufwand: Beim Abhaken wird der Median der letzten 10 Einträge vorgeschlagen (ab 3 Einträgen seit der letzten Änderung des Standards). Der Aufgaben-Editor zeigt den gelernten Wert und kann ihn als Standard übernehmen.
+- Symbol- und Namensfeld im Aufgaben-Editor richtig dargestellt.
+
 ## 1.2.0
 
 - Danke sagen: Emoji-Reaktionen auf Aufgaben, die andere erledigt haben, mit eigener Karte auf der Aufgabenseite, Anzeige im Verlauf, in der Wochenübersicht und in der Statistik.

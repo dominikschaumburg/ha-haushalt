@@ -13,7 +13,7 @@ Wer hat zuletzt das Bad geputzt? Wer bringt eigentlich immer den Müll runter? *
 - **Nachtragen und gemeinsam erledigen**: Über die Aufgabe lassen sich Zeitpunkt, Personen (auch mehrere, der Aufwand wird geteilt), Aufwand und eine Notiz angeben.
 - **Alles widerrufbar**: Nach jedem Abhaken gibt es „Rückgängig“. Im Verlauf lassen sich Einträge bearbeiten, löschen und wiederherstellen. Gelöscht wird nie endgültig, und jede Änderung landet im Änderungsprotokoll der Datenbank.
 - **Danke sagen**: Auf Aufgaben, die andere erledigt haben, kann man mit einem Emoji reagieren (❤️ 🙏 👏 🎉 💪 🤩). Neue Erledigungen der anderen erscheinen oben auf der Aufgabenseite, erhaltene Danke in der Wochenübersicht, und Home Assistant bekommt ein Ereignis, z. B. für eine Push-Nachricht.
-- **Aufwand und Kategorien**: Jede Aufgabe hat einen realistischen Zeitaufwand und eine Kategorie, damit sich die investierte Zeit auswerten lässt.
+- **Aufwand und Kategorien**: Jede Aufgabe hat einen realistischen Zeitaufwand und eine Kategorie, damit sich die investierte Zeit auswerten lässt. Der vorgeschlagene Aufwand lernt aus den letzten Einträgen (Median).
 - **Statistik**: Anteile pro Person, Wochen- und Monatstrends, Aktivitäts-Heatmaps pro Person, „Wer macht was?“ nach Kategorie und Aufgabe sowie Wochentagsprofile, wahlweise nach Zeit oder Anzahl.
 - **Passt zu Home Assistant**: eigener Eintrag in der Seitenleiste, übernimmt hellen/dunklen Modus, funktioniert in der Companion-App am Handy.
 - **Sensoren und Ereignisse**: `sensor.haushalt_faellig` (Anzahl fälliger Aufgaben) und `sensor.haushalt_<name>_7_tage` (Minuten pro Person, letzte 7 Tage) sowie die Ereignisse `haushalt_erledigt` und `haushalt_reaktion` für eigene Automationen.

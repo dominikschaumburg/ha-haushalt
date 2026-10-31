@@ -32,6 +32,7 @@ const task = (id) => S.tasks.find((t) => t.id === id);
 const category = (id) => S.categories.find((c) => c.id === id);
 const pcolor = (p) => `var(--series-${p?.color || 1})`;
 const activePersons = () => S.persons.filter((p) => p.active);
+const effort = (t) => t.effective_minutes ?? t.minutes;
 
 // ---------------------------------------------------------------- Zeit & Format
 
@@ -287,7 +288,7 @@ function taskCard(t) {
   const who = t.last_persons.map(person).filter(Boolean);
   const last = t.last_done ? `${who.map((p) => esc(p.name)).join(" & ")} ${relDay(new Date(t.last_done))}` : "";
   const status = d ? `<span class="status ${d.status}"><i></i>${d.label}</span>` : "";
-  const meta = [status, `≈ ${fmtMin(t.minutes)}`, last].filter(Boolean).join('<span class="dot">·</span>');
+  const meta = [status, `≈ ${fmtMin(effort(t))}`, last].filter(Boolean).join('<span class="dot">·</span>');
   return `<div class="task ${d?.status || ""}">
     <button class="task-main" data-open="${t.id}">
       <span class="ticon" style="--frac:${d ? d.frac : 0}">${esc(t.icon || "•")}</span>
@@ -372,7 +373,7 @@ async function openLog({ taskId, entry }) {
   openSheet(`
     <div class="sheet-head">
       <span class="ticon big">${esc(t.icon || "•")}</span>
-      <div><h2>${esc(t.name)}</h2><div class="muted">${[d?.label, t.interval_days ? intervalName(t.interval_days) : "Ohne festen Rhythmus", `≈ ${fmtMin(t.minutes)}`].filter(Boolean).join(" · ")}</div></div>
+      <div><h2>${esc(t.name)}</h2><div class="muted">${[d?.label, t.interval_days ? intervalName(t.interval_days) : "Ohne festen Rhythmus", `≈ ${fmtMin(effort(t))}`].filter(Boolean).join(" · ")}</div></div>
       <button class="icon-btn" data-close aria-label="Schließen">✕</button>
     </div>
     ${entry ? `<label class="field"><span>Aufgabe</span><select name="task">${taskOptions}</select></label>` : ""}
@@ -382,7 +383,7 @@ async function openLog({ taskId, entry }) {
       <input type="datetime-local" name="when" value="${localInput(when)}" max="${localInput(new Date(Date.now() + 3600000))}">
     </div>
     <label class="field"><span>Aufwand <em class="muted" data-share></em></span>
-      <div class="stepper"><button type="button" data-step="-5">−</button><input type="number" name="minutes" min="0" step="1" inputmode="numeric" value="${Math.round(entry ? entry.minutes : t.minutes)}"><span>min</span><button type="button" data-step="5">+</button></div>
+      <div class="stepper"><button type="button" data-step="-5">−</button><input type="number" name="minutes" min="0" step="1" inputmode="numeric" value="${Math.round(entry ? entry.minutes : effort(t))}"><span>min</span><button type="button" data-step="5">+</button></div>
     </label>
     <label class="field"><span>Notiz</span><input type="text" name="note" value="${esc(entry?.note || "")}" placeholder="optional"></label>
     <div class="sheet-actions">
@@ -787,8 +788,22 @@ function taskSettingRow(t) {
   return `<button class="setting-row task-row" data-task-edit="${t.id}">
     <span class="ticon sm">${esc(t.icon)}</span><span class="grow">${esc(t.name)}</span>
     <span class="muted small">${t.interval_days ? intervalName(t.interval_days) : "—"}</span>
-    <span class="muted small num">${fmtMin(t.minutes)}</span>
+    <span class="muted small num" ${t.learned_minutes != null ? `title="Gelernt aus ${t.learned_from} Einträgen, Standard ${t.minutes} min"` : ""}>${t.learned_minutes != null ? "⌀ " : ""}${fmtMin(effort(t))}</span>
   </button>`;
+}
+
+const LEARN_WINDOW = 10;
+const LEARN_MIN = 3;
+
+function learnInfo(t) {
+  if (t.learned_minutes == null) {
+    const left = LEARN_MIN - t.learned_from;
+    return `<div class="learn muted small">Noch ${plural(left, "Eintrag", "Einträge")} bis zum gelernten Aufwand – bis dahin gilt der Standard.</div>`;
+  }
+  const diff = t.learned_minutes - t.minutes;
+  const trend = diff === 0 ? "entspricht dem Standard" : `${diff > 0 ? "+" : "−"}${fmtMin(Math.abs(diff))} ggü. Standard`;
+  return `<div class="learn"><span>⌀ <b>${fmtMin(t.learned_minutes)}</b> aus den letzten ${t.learned_from} Einträgen · ${trend}</span>
+    ${diff ? `<button type="button" class="btn ghost sm" data-adopt="${t.learned_minutes}">Als Standard übernehmen</button>` : ""}</div>`;
 }
 
 function openTaskEditor(t) {
@@ -798,22 +813,24 @@ function openTaskEditor(t) {
   openSheet(`
     <div class="sheet-head"><span class="ticon big">${esc(t.icon || "•")}</span><div><h2>${isNew ? "Neue Aufgabe" : "Aufgabe bearbeiten"}</h2>${isNew ? "" : `<div class="muted">${plural(t.count, "Mal", "Mal")} erledigt</div>`}</div><button class="icon-btn" data-close aria-label="Schließen">✕</button></div>
     <div class="grid2">
-      <label class="field"><span>Symbol</span><input name="icon" value="${esc(t.icon)}" maxlength="4" placeholder="🧹" class="emoji-in"></label>
-      <label class="field grow"><span>Name</span><input name="name" value="${esc(t.name)}" required></label>
+      <label class="field"><span>Symbol</span><input type="text" name="icon" value="${esc(t.icon)}" maxlength="4" placeholder="🧹" class="emoji-in"></label>
+      <label class="field grow"><span>Name</span><input type="text" name="name" value="${esc(t.name)}" required></label>
     </div>
     <label class="field"><span>Kategorie</span><select name="category">${S.categories.map((c) => `<option value="${c.id}" ${c.id === t.category_id ? "selected" : ""}>${esc(c.icon)} ${esc(c.name)}</option>`).join("")}<option value="" ${category(t.category_id) ? "" : "selected"}>Ohne Kategorie</option></select></label>
     <div class="grid2">
       <label class="field"><span>Rhythmus</span><select name="interval">${INTERVALS.map(([d, l]) => `<option value="${d}" ${(t.interval_days || 0) === d ? "selected" : ""}>${l}</option>`).join("")}<option value="custom" ${custom ? "selected" : ""}>Eigener …</option></select></label>
       <label class="field" data-custom ${custom ? "" : "hidden"}><span>Alle … Tage</span><input type="number" name="days" min="1" value="${t.interval_days || 10}"></label>
     </div>
-    <label class="field"><span>Üblicher Aufwand</span><div class="stepper"><button type="button" data-step="-5">−</button><input type="number" name="minutes" min="0" value="${t.minutes}" inputmode="numeric"><span>min</span><button type="button" data-step="5">+</button></div></label>
-    <p class="muted small">Der Aufwand wird beim Abhaken vorgeschlagen und lässt sich pro Eintrag anpassen. Änderungen hier wirken nur auf neue Einträge.</p>
+    <label class="field"><span>Standardaufwand</span><div class="stepper"><button type="button" data-step="-5">−</button><input type="number" name="minutes" min="0" value="${t.minutes}" inputmode="numeric"><span>min</span><button type="button" data-step="5">+</button></div></label>
+    ${isNew ? "" : learnInfo(t)}
+    <p class="muted small">Beim Abhaken wird der Median der letzten ${LEARN_WINDOW} Einträge vorgeschlagen, sobald es mindestens ${LEARN_MIN} gibt – vorher der Standard. Wer beim Abhaken den Aufwand korrigiert, bringt der App also bei, wie lange es wirklich dauert. Ein neuer Standard setzt das Lernen zurück; bestehende Einträge bleiben unverändert.</p>
     <div class="sheet-actions">
       ${isNew ? "" : t.active ? `<button type="button" class="btn danger" data-archive>${t.count ? "Archivieren" : "Löschen"}</button>` : `<button type="button" class="btn ghost" data-reactivate>Reaktivieren</button>`}
       <button type="submit" class="btn primary">Speichern</button>
     </div>`, (dlg) => {
     const form = $("form", dlg);
     form.interval.addEventListener("change", () => { $("[data-custom]", dlg).hidden = form.interval.value !== "custom"; });
+    $("[data-adopt]", dlg)?.addEventListener("click", (e) => { form.minutes.value = e.target.dataset.adopt; });
     form.icon.addEventListener("input", () => { $(".sheet-head .ticon", dlg).textContent = form.icon.value || "•"; });
     dlg.querySelectorAll("[data-step]").forEach((b) => b.addEventListener("click", () => { form.minutes.value = Math.max(0, (+form.minutes.value || 0) + +b.dataset.step); }));
     form.addEventListener("submit", async (e) => {
@@ -853,8 +870,8 @@ function openCategoryEditor(c) {
   openSheet(`
     <div class="sheet-head"><span class="ticon big">${esc(c.icon || "•")}</span><div><h2>${isNew ? "Neue Kategorie" : "Kategorie bearbeiten"}</h2></div><button class="icon-btn" data-close aria-label="Schließen">✕</button></div>
     <div class="grid2">
-      <label class="field"><span>Symbol</span><input name="icon" value="${esc(c.icon)}" maxlength="4" class="emoji-in"></label>
-      <label class="field grow"><span>Name</span><input name="name" value="${esc(c.name)}" required></label>
+      <label class="field"><span>Symbol</span><input type="text" name="icon" value="${esc(c.icon)}" maxlength="4" class="emoji-in"></label>
+      <label class="field grow"><span>Name</span><input type="text" name="name" value="${esc(c.name)}" required></label>
     </div>
     <div class="sheet-actions">
       ${isNew ? "" : `<button type="button" class="btn danger" data-del-cat>Löschen</button>`}

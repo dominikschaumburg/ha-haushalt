@@ -247,7 +247,8 @@ main { max-width: 960px; margin: 0 auto; padding: 16px 16px 96px; }
 .field > span { font-size: 13px; font-weight: 600; color: var(--ink-2); }
 .field input[type="datetime-local"] { margin-top: 4px; }
 .grid2 { display: flex; gap: 12px; }
-.grid2 .field { flex: 1; }
+.grid2 .field { flex: 1; min-width: 0; }
+.grid2 input { width: 100%; }
 .grid2 .field:first-child:has(.emoji-in) { flex: 0 0 80px; }
 .emoji-in { text-align: center; font-size: 20px; }
 .stepper { display: flex; align-items: center; gap: 8px; }
@@ -421,3 +422,5 @@ p { margin: 0 0 10px; font-size: 14px; }
 .received { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin-top: 10px; font-size: 13px; color: var(--ink-2); }
 .thanks-count { margin-top: 6px; font-size: 12px; color: var(--ink-2); }
 .more-thanks { margin-top: 8px; }
+.learn { display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap; font-size: 13px; background: var(--surface-2); border-radius: 10px; padding: 8px 10px; }
+.learn b { font-weight: 650; }

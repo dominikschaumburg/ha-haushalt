@@ -12,6 +12,8 @@ Der farbige Ring um das Symbol zeigt, wie viel vom Rhythmus abgelaufen ist: grü
 
 **Statistik**: Zeitraum (4 Wochen, 3 Monate, 12 Monate, Gesamt) und Maß (Zeit oder Anzahl) oben wählen. Hover oder Tippen auf Diagramme zeigt Details. „Wer macht was?“ lässt sich je Kategorie aufklappen.
 
+**Aufwand**: Jede Aufgabe hat einen Standardaufwand. Sobald es seit der letzten Änderung des Standards mindestens 3 Einträge gibt, schlägt die App stattdessen den Median der letzten 10 Einträge vor – auch beim schnellen Abhaken. Wer den Aufwand beim Abhaken korrigiert, bringt der App also bei, wie lange eine Aufgabe wirklich dauert. Der Median reagiert erst, wenn mehrere Einträge abweichen, einzelne Ausreißer verschieben ihn nicht. Im Aufgaben-Editor steht der gelernte Wert neben dem Standard und lässt sich übernehmen; ein neuer Standard startet das Lernen neu.
+
 **Einstellungen**: Personen (Name, Farbe, aktiv), Aufgaben (Symbol, Kategorie, Rhythmus, Aufwand), Kategorien und Export als JSON oder CSV. Aufgaben mit Einträgen werden beim Entfernen archiviert, damit die Statistik erhalten bleibt.
 
 ## Konfiguration

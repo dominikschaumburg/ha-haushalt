@@ -24,6 +24,8 @@ SUPERVISOR_TOKEN = os.environ.get("SUPERVISOR_TOKEN")
 STATIC = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static")
 SEED = os.path.join(os.path.dirname(os.path.abspath(__file__)), "seed.json")
 # 172.30.32.2 = Ingress-Proxy des Supervisors, 172.30.32.1 = Home Assistant Core (rest_command)
+LEARN_WINDOW = 10  # so viele letzte Einträge fließen in den gelernten Aufwand ein
+LEARN_MIN = 3  # ab so vielen Einträgen ersetzt der gelernte Wert den Standard
 REACTIONS = ("❤️", "🙏", "👏", "🎉", "💪", "🤩")
 INGRESS_IP = "172.30.32.2"
 CORE_IP = "172.30.32.1"
@@ -92,7 +94,8 @@ CREATE TABLE IF NOT EXISTS tasks (
   interval_days INTEGER,
   active INTEGER NOT NULL DEFAULT 1,
   sort INTEGER NOT NULL DEFAULT 0,
-  created_at TEXT NOT NULL
+  created_at TEXT NOT NULL,
+  minutes_changed_at TEXT
 );
 CREATE TABLE IF NOT EXISTS completions (
   id INTEGER PRIMARY KEY,
@@ -139,9 +142,14 @@ class Store:
         self.db.execute("PRAGMA foreign_keys = ON")
         self.db.execute("PRAGMA journal_mode = WAL")
         self.db.executescript(SCHEMA)
-        if self.db.execute("PRAGMA user_version").fetchone()[0] == 0:
+        version = self.db.execute("PRAGMA user_version").fetchone()[0]
+        if version == 0:
             self._seed()
-            self.db.execute("PRAGMA user_version = 1")
+        if version < 2:
+            cols = {r[1] for r in self.db.execute("PRAGMA table_info(tasks)")}
+            if "minutes_changed_at" not in cols:
+                self.db.execute("ALTER TABLE tasks ADD COLUMN minutes_changed_at TEXT")
+        self.db.execute("PRAGMA user_version = 2")
 
     def _seed(self):
         with open(SEED) as f:
@@ -247,12 +255,29 @@ class Store:
         persons = self._persons_for([r["id"] for r in last.values()])
         counts = {r["task_id"]: r["n"] for r in self.q(
             "SELECT task_id, COUNT(*) n FROM completions WHERE deleted_at IS NULL GROUP BY task_id")}
+        history = {}
+        for r in self.q("SELECT task_id, minutes, created_at FROM completions WHERE deleted_at IS NULL"
+                        " ORDER BY done_at DESC"):
+            history.setdefault(r["task_id"], []).append(r)
         for t in tasks:
             l = last.get(t["id"])
             t["last_done"] = l["done_at"] if l else None
             t["last_persons"] = persons.get(l["id"], []) if l else []
             t["count"] = counts.get(t["id"], 0)
+            t["learned_minutes"], t["learned_from"] = self._learned(t, history.get(t["id"], []))
+            t["effective_minutes"] = t["learned_minutes"] if t["learned_minutes"] is not None else t["minutes"]
         return tasks
+
+    @staticmethod
+    def _learned(task, rows):
+        """Median der letzten Einträge seit der letzten Änderung des Standardaufwands."""
+        since = task.get("minutes_changed_at") or ""
+        values = sorted([r["minutes"] for r in rows if (r["created_at"] or "") >= since][:LEARN_WINDOW])
+        if len(values) < LEARN_MIN:
+            return None, len(values)
+        mid = len(values) // 2
+        median = values[mid] if len(values) % 2 else (values[mid - 1] + values[mid]) / 2
+        return int(round(median)), len(values)
 
     def save_task(self, tid, data, actor):
         fields = {k: data[k] for k in ("name", "icon", "category_id", "minutes", "interval_days", "active", "sort")
@@ -263,6 +288,9 @@ class Store:
                 raise ApiError(400, "Name fehlt")
         if "minutes" in fields:
             fields["minutes"] = max(0, int(fields["minutes"] or 0))
+            current = self.q("SELECT minutes FROM tasks WHERE id = ?", (tid,)) if tid else []
+            if not current or current[0]["minutes"] != fields["minutes"]:
+                fields["minutes_changed_at"] = now_iso()  # Lernen beginnt neu ab dem neuen Standard
         if "interval_days" in fields:
             fields["interval_days"] = int(fields["interval_days"]) if fields["interval_days"] else None
         if tid is None:
@@ -364,7 +392,10 @@ class Store:
         task = task[0]
         ids = self._check_persons(data.get("person_ids") or [])
         done_at = parse_iso(data["done_at"]) if data.get("done_at") else now_iso()
-        minutes = float(data["minutes"]) if data.get("minutes") not in (None, "") else float(task["minutes"])
+        if data.get("minutes") not in (None, ""):
+            minutes = float(data["minutes"])
+        else:
+            minutes = float(next(t["effective_minutes"] for t in self.tasks() if t["id"] == task["id"]))
         with self.lock:
             cur = self.x("INSERT INTO completions (task_id, done_at, minutes, note, created_at, created_by)"
                          " VALUES (?, ?, ?, ?, ?, ?)",
@@ -444,7 +475,8 @@ class Store:
         tables = {
             "persons": ("id", "name", "ha_user_id", "color", "active", "created_at"),
             "categories": ("id", "name", "icon", "sort"),
-            "tasks": ("id", "name", "icon", "category_id", "minutes", "interval_days", "active", "sort", "created_at"),
+            "tasks": ("id", "name", "icon", "category_id", "minutes", "interval_days", "active", "sort", "created_at",
+                      "minutes_changed_at"),
             "completions": ("id", "task_id", "done_at", "minutes", "note", "created_at", "created_by",
                             "deleted_at", "deleted_by"),
             "audit": ("id", "at", "actor", "action", "ref", "data"),
