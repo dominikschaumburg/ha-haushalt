@@ -993,6 +993,7 @@ function notifyCard() {
       <label class="field"><span>Nur wenn an</span><input type="text" name="notify_require_on" list="ha-entities" value="${esc(st.notify_require_on)}" placeholder="binary_sensor.jemand_zu_hause" autocapitalize="off" spellcheck="false"></label>
       <label class="field"><span>Nicht wenn an</span><input type="text" name="notify_require_off" list="ha-entities" value="${esc(st.notify_require_off)}" placeholder="calendar.urlaub" autocapitalize="off" spellcheck="false"></label>
     </div>
+    <label class="toggle notify-done"><input type="checkbox" data-notify-done ${st.notify_done === "1" ? "checked" : ""}> Alle anderen benachrichtigen, wenn jemand eine Aufgabe erledigt</label>
     <div class="list">${activePersons().map((p) => `<div class="setting-row" data-notify-person="${p.id}">
       ${avatar(p)}<span class="notify-name">${esc(p.name)}</span>
       <input type="text" list="ha-notify" value="${esc(p.notify_service || "")}" placeholder="notify.mobile_app_…" aria-label="Benachrichtigungsdienst für ${esc(p.name)}" autocapitalize="off" spellcheck="false">
@@ -1008,6 +1009,9 @@ function bindNotifyCard(el) {
   card.querySelectorAll("input[name]").forEach((i) => i.addEventListener("change", async () => {
     try { S.settings = await api("settings", { method: "PATCH", body: { [i.name]: i.value } }); toast("Gespeichert"); } catch (e) { fail(e); }
   }));
+  $("[data-notify-done]", card).addEventListener("change", async (e) => {
+    try { S.settings = await api("settings", { method: "PATCH", body: { notify_done: e.target.checked ? "1" : "" } }); toast("Gespeichert"); } catch (err) { fail(err); }
+  });
   card.querySelectorAll("[data-notify-person]").forEach((row) => {
     const id = +row.dataset.notifyPerson;
     $("input", row).addEventListener("change", async (e) => {

@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.5.0
+
+- Neue Einstellung unter Benachrichtigungen: Alle anderen bekommen eine Nachricht, wenn jemand eine Aufgabe erledigt (nicht für Einträge, die mehr als 6 Stunden nachgetragen werden). Standardmäßig aus.
+
 ## 1.4.0
 
 - Fälligkeit aus Sensoren: Aufgaben können zusätzlich zum Rhythmus auf Home-Assistant-Entitäten hören – „Wert fällt auf die Grenze“ (z. B. Restlaufzeit von Saugroboter-Filtern), „Wert erreicht die Grenze“ (z. B. Zähler) oder „Zuwachs seit dem Abhaken“ (z. B. kWh eines Energiezählers). Fällig ist, was zuerst greift.

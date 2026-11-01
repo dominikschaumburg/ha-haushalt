@@ -34,7 +34,9 @@ INGRESS_IP = "172.30.32.2"
 CORE_IP = "172.30.32.1"
 SENSOR_MODES = ("below", "above", "increase")
 SOON_FRAC = 0.8  # ab diesem Anteil gilt eine Sensor-Regel als „bald fällig“
-DEFAULT_SETTINGS = {"notify_time": "18:00", "notify_require_on": "", "notify_require_off": "", "notified_on": ""}
+DEFAULT_SETTINGS = {"notify_time": "18:00", "notify_require_on": "", "notify_require_off": "", "notify_done": "",
+                    "notified_on": ""}
+DONE_NOTIFY_HOURS = 6  # nachgetragene Einträge, die älter sind, lösen keine Erledigt-Nachricht aus
 
 log = logging.getLogger("haushalt")
 
@@ -876,6 +878,7 @@ class HomeAssistant:
                 log.warning("Aktion %s fehlgeschlagen: %s", action["service"], e)
         for service in self.notified.pop(task.get("id"), set()):
             self.notify(service, {"message": "clear_notification", "data": {"tag": f"haushalt_{task['id']}"}})
+        self.notify_done(completion, task, names)
         self._states_at = 0  # Sensoren haben sich durch die Aktion vermutlich geändert
 
     def fire(self, event, data):
@@ -906,6 +909,20 @@ class HomeAssistant:
             data["url"] = self.panel
             data["clickAction"] = self.panel
         return self.notify(person["notify_service"], {"title": title, "message": message, "data": data})
+
+    def notify_done(self, completion, task, names):
+        """Alle anderen benachrichtigen, wenn jemand etwas erledigt hat (Einstellung „notify_done“)."""
+        if self.store.settings()["notify_done"] != "1" or not completion.get("id"):
+            return
+        done_at = datetime.fromisoformat(completion["done_at"].replace("Z", "+00:00"))
+        if datetime.now(timezone.utc) - done_at > timedelta(hours=DONE_NOTIFY_HOURS):
+            return
+        who = [names.get(i) for i in completion["person_ids"] if names.get(i)]
+        verb = "haben" if len(who) > 1 else "hat"
+        for p in self.store.persons():
+            if p["active"] and p["notify_service"] and p["id"] not in completion["person_ids"]:
+                self.push(p, f"✅ {task.get('icon') or ''} {task.get('name')}".replace("  ", " "),
+                          f"{' & '.join(who)} {verb} das erledigt.", tag=f"haushalt_erledigt_{completion['id']}")
 
     def maybe_notify(self):
         """Einmal am Tag zur eingestellten Uhrzeit (bis 3 Stunden danach, falls die App gerade neu startet)."""

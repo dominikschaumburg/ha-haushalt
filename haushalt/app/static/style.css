@@ -445,3 +445,4 @@ p { margin: 0 0 10px; font-size: 14px; }
 [data-notify-card] .grid2 input { width: 100%; }
 .notify-name { width: 80px; font-weight: 550; }
 @media (max-width: 640px) { .grid2:has([name="notify_time"]) { flex-direction: column; } }
+.notify-done { margin: 4px 0 10px; }
