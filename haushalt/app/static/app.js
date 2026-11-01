@@ -3,9 +3,9 @@ import { esc, lineChart, heatmap, heatLegend, groupedColumns, splitBar, dayKey, 
 // ---------------------------------------------------------------- Zustand & API
 
 const S = {
-  me: null, persons: [], categories: [], tasks: [], reaction_set: [], settings: {}, ha: false, catalog: null,
+  me: null, persons: [], categories: [], tasks: [], reaction_set: [], settings: {}, ha: false, catalog: null, areas: [],
   view: new URLSearchParams(location.search).get("v") || localGet("view") || "tasks",
-  search: "",
+  search: "", room: localGet("room") || "all",
   history: { days: 30, person: "all", category: "all", deleted: false, rows: [] },
   stats: { range: localGet("range") || "90", metric: localGet("metric") || "time", rows: [], prev: [] },
 };
@@ -30,6 +30,7 @@ const $ = (sel, root = document) => root.querySelector(sel);
 const person = (id) => S.persons.find((p) => p.id === id);
 const task = (id) => S.tasks.find((t) => t.id === id);
 const category = (id) => S.categories.find((c) => c.id === id);
+const areaName = (id) => S.areas.find((a) => a.id === id)?.name;
 const pcolor = (p) => `var(--series-${p?.color || 1})`;
 const activePersons = () => S.persons.filter((p) => p.active);
 const effort = (t) => t.effective_minutes ?? t.minutes;
@@ -175,7 +176,10 @@ async function renderTasks(el) {
   const week = rows.filter((c) => new Date(c.done_at) >= weekStart);
   const recent = rows.filter((c) => new Date(c.done_at) >= recentStart);
   const q = S.search.trim().toLowerCase();
-  const active = S.tasks.filter((t) => t.active && (!q || t.name.toLowerCase().includes(q)));
+  const usedAreas = S.areas.filter((a) => S.tasks.some((t) => t.active && t.area_id === a.id));
+  if (S.room !== "all" && !usedAreas.some((a) => a.id === S.room)) S.room = "all";
+  const active = S.tasks.filter((t) => t.active && (!q || t.name.toLowerCase().includes(q))
+    && (S.room === "all" || t.area_id === S.room));
   const urgent = active.filter((t) => ["overdue", "due"].includes(due(t)?.status))
     .sort((a, b) => due(a).diff - due(b).diff);
   const soon = active.filter((t) => due(t)?.status === "soon").sort((a, b) => due(a).diff - due(b).diff);
@@ -196,6 +200,7 @@ async function renderTasks(el) {
     ${weekCard(week)}
     ${thanksCard(recent)}
     <div class="search"><input type="search" placeholder="Aufgabe suchen …" value="${esc(S.search)}" aria-label="Aufgabe suchen"></div>
+    ${usedAreas.length ? `<div class="filters rooms">${chips("room", [{ value: "all", html: "Alle Räume" }, ...usedAreas.map((a) => ({ value: a.id, html: esc(a.name) }))], [S.room], false)}</div>` : ""}
     ${urgent.length ? section("Jetzt dran", urgent, "Sortiert nach Dringlichkeit") : ""}
     ${soon.length ? section("Demnächst", soon) : ""}
     ${!urgent.length && !soon.length && !q ? `<div class="empty-state">🎉 Alles erledigt, was einen Rhythmus hat.</div>` : ""}
@@ -215,6 +220,7 @@ async function renderTasks(el) {
     setTimeout(() => renderTasks(el), 300);
   }));
   $("[data-goto-history]", el)?.addEventListener("click", () => go("history"));
+  bindChips($(".rooms", el) || document.createElement("div"), () => { S.room = chipValues(el, "room")[0]; localSet("room", S.room); renderTasks(el); });
   el.querySelectorAll("[data-check]").forEach((b) => b.addEventListener("click", () => quickDone(+b.dataset.check, b)));
   el.querySelectorAll("[data-open]").forEach((b) => b.addEventListener("click", () => openLog({ taskId: +b.dataset.open })));
 }
@@ -311,7 +317,8 @@ function taskCard(t) {
   const who = t.last_persons.map(person).filter(Boolean);
   const last = t.last_done ? `${who.map((p) => esc(p.name)).join(" & ")} ${relDay(new Date(t.last_done))}` : "";
   const status = d ? `<span class="status ${d.status}"><i></i>${d.label}</span>` : "";
-  const meta = [status, `≈ ${fmtMin(effort(t))}`, last].filter(Boolean).join('<span class="dot">·</span>');
+  const room = S.room === "all" && areaName(t.area_id) ? `📍 ${esc(areaName(t.area_id))}` : "";
+  const meta = [status, `≈ ${fmtMin(effort(t))}`, last, room].filter(Boolean).join('<span class="dot">·</span>');
   return `<div class="task ${d?.status || ""}">
     <button class="task-main" data-open="${t.id}">
       <span class="ticon" style="--frac:${d ? d.frac : 0}">${esc(t.icon || "•")}</span>
@@ -627,6 +634,7 @@ async function renderStats(el) {
       <div class="legend">${people.map((p) => `<span><i style="background:${pcolor(p)}"></i>${esc(p.name)}</span>`).join("")}</div>
       ${whoDoesWhat(rows, people, metric)}
     </section>
+    ${roomsCard(rows, people, metric)}
     <section class="card">
       <div class="card-head"><h2>Wochentage</h2><span class="muted">Ø pro Wochentag</span></div>
       <div data-weekday></div>
@@ -723,6 +731,20 @@ function drawWeekdays(el, rows, people, start, today, metric, fmt) {
   groupedColumns($("[data-weekday]", el), { groups: names, series, metric, fmt, tipTitle: (i) => `Ø ${full[i]}` });
 }
 
+function roomsCard(rows, people, metric) {
+  const fmt = metric === "time" ? fmtShort : (v) => fmtCount(Math.round(v * 10) / 10);
+  const list = S.areas.map((a) => {
+    const sh = shares(rows.filter((r) => task(r.task_id)?.area_id === a.id), metric);
+    return { a, sh, total: [...sh.values()].reduce((x, y) => x + y, 0) };
+  }).filter((x) => x.total > 0).sort((x, y) => y.total - x.total);
+  if (!list.length) return "";
+  const max = list[0].total;
+  return `<section class="card"><div class="card-head"><h2>Räume</h2><span class="muted">Aufgaben mit Raum</span></div>
+    <div class="wdw">${list.map((x) => `<div class="wdw-task room-row"><span class="wdw-name">📍 ${esc(x.a.name)}</span><span class="wdw-total">${fmt(x.total)}</span>
+      <div style="width:${Math.max(4, (100 * x.total) / max)}%">${splitBar(people.map((p) => ({ name: p.name, color: pcolor(p), value: x.sh.get(p.id) || 0, tip: `${p.name}: ${fmt(x.sh.get(p.id) || 0)}` })), { height: 14 })}</div></div>`).join("")}</div>
+  </section>`;
+}
+
 function whoDoesWhat(rows, people, metric) {
   const fmt = metric === "time" ? fmtShort : (v) => fmtCount(Math.round(v * 10) / 10);
   const cats = [...S.categories, { id: null, name: "Sonstiges", icon: "✨" }].map((c) => {
@@ -759,7 +781,7 @@ function renderSettings(el) {
       </div>`).join("")}</div>
     </section>
     <section class="card">
-      <div class="card-head"><h2>Aufgaben</h2><button class="btn ghost sm" data-add-task>+ Aufgabe</button></div>
+      <div class="card-head"><h2>Aufgaben</h2><div class="row-btns"><button class="btn ghost sm" data-templates>Aus Vorlagen …</button><button class="btn ghost sm" data-add-task>+ Aufgabe</button></div></div>
       ${[...S.categories, null].map((c) => {
         const list = S.tasks.filter((t) => t.active && (c ? t.category_id === c.id : !category(t.category_id)));
         if (!list.length && !c) return "";
@@ -791,6 +813,7 @@ function renderSettings(el) {
   bindNotifyCard(el);
   el.querySelectorAll("[data-task-edit]").forEach((b) => b.addEventListener("click", () => openTaskEditor(task(+b.dataset.taskEdit))));
   $("[data-add-task]", el).addEventListener("click", () => openTaskEditor(null));
+  $("[data-templates]", el).addEventListener("click", () => openTemplates());
   $("[data-add-cat]", el).addEventListener("click", () => openCategoryEditor(null));
   el.querySelectorAll("[data-edit-cat]").forEach((b) => b.addEventListener("click", () => openCategoryEditor(category(+b.dataset.editCat))));
   el.querySelectorAll("[data-export]").forEach((b) => b.addEventListener("click", () => exportData(b.dataset.export)));
@@ -861,7 +884,10 @@ function openTaskEditor(t) {
       <label class="field"><span>Symbol</span><input type="text" name="icon" value="${esc(t.icon)}" maxlength="4" placeholder="🧹" class="emoji-in"></label>
       <label class="field grow"><span>Name</span><input type="text" name="name" value="${esc(t.name)}" required></label>
     </div>
-    <label class="field"><span>Kategorie</span><select name="category">${S.categories.map((c) => `<option value="${c.id}" ${c.id === t.category_id ? "selected" : ""}>${esc(c.icon)} ${esc(c.name)}</option>`).join("")}<option value="" ${category(t.category_id) ? "" : "selected"}>Ohne Kategorie</option></select></label>
+    <div class="grid2">
+      <label class="field"><span>Kategorie</span><select name="category">${S.categories.map((c) => `<option value="${c.id}" ${c.id === t.category_id ? "selected" : ""}>${esc(c.icon)} ${esc(c.name)}</option>`).join("")}<option value="" ${category(t.category_id) ? "" : "selected"}>Ohne Kategorie</option></select></label>
+      ${S.areas.length ? `<label class="field"><span>Raum</span><select name="area"><option value="">Kein Raum</option>${S.areas.map((a) => `<option value="${esc(a.id)}" ${a.id === t.area_id ? "selected" : ""}>${esc(a.name)}</option>`).join("")}</select></label>` : ""}
+    </div>
     <div class="grid2">
       <label class="field"><span>Rhythmus</span><select name="interval">${INTERVALS.map(([d, l]) => `<option value="${d}" ${(t.interval_days || 0) === d ? "selected" : ""}>${l}</option>`).join("")}<option value="custom" ${custom ? "selected" : ""}>Eigener …</option></select></label>
       <label class="field" data-custom ${custom ? "" : "hidden"}><span>Alle … Tage</span><input type="number" name="days" min="1" value="${t.interval_days || 10}"></label>
@@ -893,6 +919,7 @@ function openTaskEditor(t) {
       const body = {
         name: form.name.value, icon: form.icon.value.trim(), minutes: +form.minutes.value || 0,
         category_id: form.category.value ? +form.category.value : null,
+        ...(form.area ? { area_id: form.area.value || null } : {}),
         interval_days: form.interval.value === "custom" ? +form.days.value || null : +form.interval.value || null,
         ...haValues(dlg, t),
       };
@@ -916,6 +943,65 @@ function openTaskEditor(t) {
       dlg.close();
       await loadState();
       render();
+    });
+  });
+}
+
+// ---------------------------------------------------------------- Vorlagen
+
+async function openTemplates() {
+  let data;
+  try { data = await api("templates"); } catch (e) { return fail(e); }
+  const items = [];
+  const row = (it) => {
+    const idx = items.push(it) - 1;
+    const meta = [it.interval_days ? intervalName(it.interval_days) : "ohne Rhythmus", fmtMin(it.minutes)];
+    const what = it.status === "update"
+      ? `ergänzt „${esc(it.existing_name)}“ um ${Object.keys(it.update).map((k) => ({ sensor: "Sensor-Regel", action: "Aktion", area_id: `Raum ${esc(it.area_name || "")}` }[k])).join(" und ")}`
+      : it.status === "exists" ? `schon vorhanden${it.existing_name && it.existing_name !== it.name ? ` als „${esc(it.existing_name)}“` : ""}` : meta.join(" · ");
+    return `<label class="tpl-row ${it.status}">
+      <input type="checkbox" data-tpl="${idx}" ${it.status === "exists" ? "disabled" : ""}>
+      <span class="ticon sm">${esc(it.icon)}</span>
+      <span class="tpl-body"><span class="tpl-name">${esc(it.name)}${it.sensor ? " 📡" : ""}${it.action ? " ⚡" : ""}</span>
+        <span class="muted small">${what}</span>${it.reason ? `<span class="muted small">${esc(it.reason)}</span>` : ""}</span>
+    </label>`;
+  };
+  const open = (list) => list.filter((i) => i.status !== "exists").length;
+  openSheet(`
+    <div class="sheet-head"><span class="ticon big">📚</span><div><h2>Aufgaben aus Vorlagen</h2><div class="muted">Anhaken, was zu euch passt – Rhythmus und Aufwand lassen sich danach anpassen</div></div><button class="icon-btn" data-close aria-label="Schließen">✕</button></div>
+    ${data.devices.length ? `<section class="tpl-group"><h3>Eure Geräte <span class="muted">aus Home Assistant erkannt</span></h3>${data.devices.map(row).join("")}</section>` : ""}
+    ${data.rooms.length ? `<section class="tpl-group"><h3>Eure Räume <span class="muted">Aufgaben werden dem Raum zugeordnet</span></h3>
+      ${data.rooms.map((r) => `<details class="tpl-room"><summary>📍 ${esc(r.name)} <span class="muted small">${open(r.items)} Vorschläge</span></summary>${r.items.map(row).join("")}</details>`).join("")}</section>` : ""}
+    <section class="tpl-group"><h3>Alle Vorlagen</h3>
+      ${data.catalog.map((c) => `<details class="tpl-room"><summary>${esc(c.icon)} ${esc(c.name)} <span class="muted small">${open(c.items)} neu</span></summary>${c.items.map(row).join("")}</details>`).join("")}</section>
+    <div class="sheet-actions tpl-actions"><button type="submit" class="btn primary" data-apply disabled>Übernehmen</button></div>
+  `, (dlg) => {
+    const form = $("form", dlg);
+    const selected = () => [...dlg.querySelectorAll("[data-tpl]:checked")].map((c) => items[+c.dataset.tpl]);
+    form.addEventListener("change", () => {
+      const n = selected().length;
+      $("[data-apply]", dlg).disabled = !n;
+      $("[data-apply]", dlg).textContent = n ? `${n} übernehmen` : "Übernehmen";
+    });
+    form.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      // Dieselbe Vorlage aus Raum und Katalog nur einmal anlegen, die Variante mit Raum gewinnt
+      const byKey = new Map();
+      selected().forEach((it) => {
+        const key = it.existing_id ? `u${it.existing_id}` : `n${it.name.toLowerCase()}`;
+        const prev = byKey.get(key);
+        if (!prev) byKey.set(key, it);
+        else if (it.existing_id) byKey.set(key, { ...prev, update: { ...prev.update, ...it.update } });
+        else if (it.area_id) byKey.set(key, it);
+      });
+      try {
+        const r = await api("templates/apply", { method: "POST", body: { items: [...byKey.values()] } });
+        dlg.close();
+        toast([r.created && `${plural(r.created, "Aufgabe", "Aufgaben")} angelegt`, r.updated && `${r.updated} ergänzt`].filter(Boolean).join(", ") || "Nichts geändert");
+        S.catalog = null;
+        await loadState();
+        render();
+      } catch (err) { fail(err); }
     });
   });
 }

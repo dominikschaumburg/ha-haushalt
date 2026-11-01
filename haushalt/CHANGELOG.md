@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.7.0
+
+- Aufgaben aus Vorlagen (Einstellungen → Aufgaben → „Aus Vorlagen …“): Katalog mit über 80 typischen Aufgaben samt Rhythmus und Aufwand.
+- Passend zu den Bereichen in Home Assistant: Vorschläge je Raum (Küche, Bad, Balkon, Schlafzimmer …), die dem Raum gleich zugeordnet werden.
+- Passend zu den Geräten in Home Assistant: Saugroboter (Wartung mit Verbrauchszählern und Reset-Knöpfen, Behälter), Spülmaschine, Waschmaschine und Trockner (über „wartet/fertig“-Schalter), Filter mit Restlaufzeit, ein gemeinsames „Batterien wechseln“ für alle Batteriegeräte, Bodenfeuchte, Rauchmelder und Kaffeemaschine, Wasserkocher oder Boiler an Mess-Steckdosen. Vorhandene Aufgaben werden erkannt und auf Wunsch um Sensor-Regel, Aktion oder Raum ergänzt.
+- Aufgaben haben einen Raum: Filter in der Aufgabenliste und Auswertung „Räume“ in der Statistik.
+- Sensor-Regeln verstehen an/aus-Zustände (an = 1).
+
 ## 1.6.0
 
 - Lernender Rhythmus: Aus den Abständen zwischen den Erledigungen (Median der letzten 10, ab 3 Abständen seit der letzten Änderung des Rhythmus, mehrere Erledigungen am selben Tag zählen einmal) lernt die App, wie oft eine Aufgabe wirklich anfällt – auch wenn sie vor der Fälligkeit erledigt wird. Bei Aufgaben mit festem Rhythmus ersetzt der gelernte Wert den Standard (⌀), ohne Rhythmus erscheint er als Vorschlag im Editor. Sensor-Regeln gelten unverändert zusätzlich.

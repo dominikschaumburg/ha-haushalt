@@ -446,3 +446,20 @@ p { margin: 0 0 10px; font-size: 14px; }
 .notify-name { width: 80px; font-weight: 550; }
 @media (max-width: 640px) { .grid2:has([name="notify_time"]) { flex-direction: column; } }
 .notify-done { margin: 4px 0 10px; }
+
+/* ---- Vorlagen und Räume */
+
+.rooms { margin: -6px 0 14px; }
+.tpl-group h3 { font-size: 15px; margin: 6px 0 8px; }
+.tpl-group h3 .muted { font-weight: 400; font-size: 13px; }
+.tpl-row { display: flex; align-items: flex-start; gap: 10px; padding: 8px 4px; border-bottom: 1px solid var(--border); cursor: pointer; }
+.tpl-row input { margin-top: 8px; width: 18px; height: 18px; flex: none; }
+.tpl-row.exists { opacity: 0.5; cursor: default; }
+.tpl-body { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.tpl-name { font-weight: 550; }
+.tpl-room { border: 1px solid var(--border); border-radius: 12px; padding: 8px 12px; margin-bottom: 8px; }
+.tpl-room summary { cursor: pointer; font-weight: 550; }
+.tpl-room[open] summary { margin-bottom: 4px; }
+.tpl-room .tpl-row:last-child { border-bottom: 0; }
+.tpl-actions { position: sticky; bottom: 0; background: var(--surface); padding-top: 10px; }
+.room-row > div { min-width: 0; }

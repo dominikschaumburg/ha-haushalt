@@ -26,6 +26,7 @@ DEV = os.environ.get("HAUSHALT_DEV") == "1"
 SUPERVISOR_TOKEN = os.environ.get("SUPERVISOR_TOKEN")
 STATIC = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static")
 SEED = os.path.join(os.path.dirname(os.path.abspath(__file__)), "seed.json")
+TEMPLATES = os.path.join(os.path.dirname(os.path.abspath(__file__)), "templates.json")
 # 172.30.32.2 = Ingress-Proxy des Supervisors, 172.30.32.1 = Home Assistant Core (rest_command)
 LEARN_WINDOW = 10  # so viele letzte Einträge fließen in den gelernten Aufwand ein
 LEARN_MIN = 3  # ab so vielen Einträgen ersetzt der gelernte Wert den Standard
@@ -174,7 +175,10 @@ class Store:
         if version < 4:
             if "interval_changed_at" not in {r[1] for r in self.db.execute("PRAGMA table_info(tasks)")}:
                 self.db.execute("ALTER TABLE tasks ADD COLUMN interval_changed_at TEXT")
-        self.db.execute("PRAGMA user_version = 4")
+        if version < 5:
+            if "area_id" not in {r[1] for r in self.db.execute("PRAGMA table_info(tasks)")}:
+                self.db.execute("ALTER TABLE tasks ADD COLUMN area_id TEXT")
+        self.db.execute("PRAGMA user_version = 5")
 
     def _seed(self):
         with open(SEED) as f:
@@ -281,6 +285,11 @@ class Store:
     def categories(self):
         return self.q("SELECT * FROM categories ORDER BY sort, id")
 
+    def category_for(self, name, icon, actor):
+        """ID einer Kategorie nach Namen, legt sie bei Bedarf an."""
+        found = [c for c in self.categories() if c["name"].lower() == name.lower()]
+        return found[0]["id"] if found else self.save_category(None, {"name": name, "icon": icon}, actor)
+
     def save_category(self, cid, data, actor):
         fields = {k: data[k] for k in ("name", "icon", "sort") if k in data}
         if cid is None:
@@ -355,7 +364,7 @@ class Store:
 
     def save_task(self, tid, data, actor):
         fields = {k: data[k] for k in ("name", "icon", "category_id", "minutes", "interval_days", "active", "sort",
-                                       "sensor", "action", "notify") if k in data}
+                                       "sensor", "action", "notify", "area_id") if k in data}
         if "name" in fields:
             fields["name"] = str(fields["name"]).strip()
             if not fields["name"]:
@@ -370,6 +379,8 @@ class Store:
             current = self.q("SELECT interval_days FROM tasks WHERE id = ?", (tid,)) if tid else []
             if not current or current[0]["interval_days"] != fields["interval_days"]:
                 fields["interval_changed_at"] = now_iso()  # Lernen beginnt neu ab dem neuen Rhythmus
+        if "area_id" in fields:
+            fields["area_id"] = str(fields["area_id"]).strip() or None if fields["area_id"] else None
         if "sensor" in fields:
             fields["sensor"] = self._clean_sensor(fields["sensor"])
         if "action" in fields:
@@ -594,7 +605,7 @@ class Store:
             "persons": ("id", "name", "ha_user_id", "color", "active", "created_at", "notify_service"),
             "categories": ("id", "name", "icon", "sort"),
             "tasks": ("id", "name", "icon", "category_id", "minutes", "interval_days", "active", "sort", "created_at",
-                      "minutes_changed_at", "sensor", "action", "notify", "interval_changed_at"),
+                      "minutes_changed_at", "sensor", "action", "notify", "interval_changed_at", "area_id"),
             "completions": ("id", "task_id", "done_at", "minutes", "note", "created_at", "created_by",
                             "deleted_at", "deleted_by", "sensor_base"),
             "audit": ("id", "at", "actor", "action", "ref", "data"),
@@ -626,6 +637,16 @@ class Store:
 
 
 # ---------------------------------------------------------------- Home Assistant
+
+CONTEXT_TEMPLATE = """
+{%- set ns = namespace(e=[], a=[]) -%}
+{%- for s in states -%}{%- set d = device_id(s.entity_id) -%}
+{%- set ns.e = ns.e + [[s.entity_id, d, ((device_attr(d, 'name_by_user') or device_attr(d, 'name')) if d else none), area_id(s.entity_id)]] -%}
+{%- endfor -%}
+{%- for a in areas() -%}{%- set ns.a = ns.a + [[a, area_name(a)]] -%}{%- endfor -%}
+{{ {"areas": ns.a, "entities": ns.e} | tojson }}
+"""
+
 
 def fmt_num(v):
     """Zahl für Texte: deutsches Komma, echtes Minus, sinnvolle Nachkommastellen."""
@@ -667,7 +688,10 @@ def short_names(names):
     common = 0
     while all(len(w) > common + 1 and w[common] == words[0][common] for w in words):
         common += 1
-    return [" ".join(w[common:]) for w in words]
+    words = [w[common:] for w in words]
+    while all(len(w) > 1 and w[-1] == words[0][-1] for w in words):  # gemeinsames Ende („… Batterie“)
+        words = [w[:-1] for w in words]
+    return [" ".join(w) for w in words]
 
 
 class WebSocket:
@@ -779,10 +803,38 @@ class HomeAssistant:
 
     @staticmethod
     def value(state):
+        """Zahl aus einem Zustand; an/aus (auch home, open, true) zählt als 1/0."""
         try:
             return float(state["state"])
         except (TypeError, ValueError, KeyError):
-            return None
+            pass
+        flag = {"on": 1.0, "home": 1.0, "open": 1.0, "true": 1.0, "off": 0.0, "not_home": 0.0, "closed": 0.0,
+                "false": 0.0}
+        return flag.get(str((state or {}).get("state")).lower())
+
+    def context(self, max_age=600):
+        """Bereiche und Geräte zu jeder Entität über die Template-API (REST kennt keine Registries)."""
+        if not self.enabled:
+            path = os.environ.get("HAUSHALT_DEV_CONTEXT")
+            if DEV and path and os.path.exists(path):
+                with open(path) as f:
+                    raw = json.load(f)
+            else:
+                return {"areas": {}, "entities": {}}
+        elif time.time() - getattr(self, "_context_at", 0) > max_age:
+            try:
+                raw = self.call("POST", "/template", {"template": CONTEXT_TEMPLATE})
+                self._context_raw, self._context_at = raw, time.time()
+            except Exception as e:  # noqa: BLE001
+                log.warning("Bereiche und Geräte nicht abrufbar: %s", e)
+                raw = getattr(self, "_context_raw", {"areas": [], "entities": []})
+        else:
+            raw = self._context_raw
+        return {"areas": dict(raw["areas"]),
+                "entities": {e[0]: {"device": e[1], "device_name": e[2], "area": e[3]} for e in raw["entities"]}}
+
+    def areas(self):
+        return [{"id": k, "name": v} for k, v in sorted(self.context()["areas"].items(), key=lambda a: a[1])]
 
     def catalog(self):
         """Entitäten und Benachrichtigungsdienste für die Auswahl im Editor."""
@@ -809,8 +861,9 @@ class HomeAssistant:
             return None
         thr, mode = rule["threshold"], rule["mode"]
         base = t.get("last_sensor_base") or rule.get("base") or {}
-        names = short_names([(states.get(e) or {}).get("attributes", {}).get("friendly_name") or e
-                             for e in rule["entities"]])
+        names = [re.sub(r"\s+(Batterie|Battery\+?|Akku|Battery level)$", "", n, flags=re.I) for n in
+                 short_names([(states.get(e) or {}).get("attributes", {}).get("friendly_name") or e
+                              for e in rule["entities"]])]
         items = []
         for e, name in zip(rule["entities"], names):
             st = states.get(e)
@@ -835,9 +888,15 @@ class HomeAssistant:
                 shown = v - b if v >= b else v  # Zähler zurückgesetzt → ab null weiterzählen
                 hit = shown >= thr
                 frac = shown / thr
-            items.append({"name": name, "value": shown, "unit": unit, "hit": hit, "frac": max(0, min(1, frac))})
+            flag = re.fullmatch(r"-?[\d.]+(e-?\d+)?", str(st["state"])) is None  # an/aus statt Zahl
+            items.append({"name": name, "value": shown, "unit": unit, "hit": hit, "frac": max(0, min(1, frac)),
+                          "flag": flag})
         if not items:
             return {"status": "unknown", "frac": 0, "label": "Sensor nicht verfügbar"}
+        if all(i["flag"] for i in items):
+            hits = [i["name"] for i in items if i["hit"]]
+            return {"status": "due" if hits else "ok", "frac": 1 if hits else 0, "items": items,
+                    "label": f"Fällig: {', '.join(hits)}" if hits else "Nicht fällig"}
         u = lambda i: f"{fmt_num(i['value'])}{' ' + i['unit'] if i['unit'] else ''}"  # noqa: E731
         with_name = len(items) > 1
         hits = [i for i in items if i["hit"]]
@@ -1101,6 +1160,197 @@ class HomeAssistant:
             self.wake.wait(60)
 
 
+# ---------------------------------------------------------------- Vorlagen
+
+NOT_REPLACEABLE = r"iphone|ipad|macbook|laptop|tablet|phone|watch|pixel|galaxy|sonos|smart_series|oral_b|zahnb"
+
+
+def load_templates():
+    with open(TEMPLATES) as f:
+        return json.load(f)
+
+
+def room_kind(name, rooms):
+    """Raumart aus dem HA-Bereichsnamen („Gäste-WC“ → bathroom)."""
+    n = f"_{slugify(name)}_"
+    for kind, words in rooms.items():
+        if any(f"_{slugify(w)}_" in n for w in words):
+            return kind
+    return None
+
+
+def template_item(name, icon, category, minutes, interval_days, category_icon="", **extra):
+    item = {"name": name, "icon": icon, "category": category, "category_icon": category_icon, "minutes": minutes,
+            "interval_days": interval_days, "sensor": None, "action": None, "area_id": None, "reason": ""}
+    item.update(extra)
+    return item
+
+
+def detect_devices(states, ctx):
+    """Vorschläge mit Sensor-Regel und Aktion für Geräte, die in HA erkennbar sind."""
+    ents = ctx["entities"]
+    by_device = {}
+    for e, info in ents.items():
+        if info["device"]:
+            by_device.setdefault(info["device"], []).append(e)
+    attr = lambda e, k: (states.get(e) or {}).get("attributes", {}).get(k)  # noqa: E731
+    fname = lambda e: attr(e, "friendly_name") or e  # noqa: E731
+    dev_name = lambda e: (ents.get(e) or {}).get("device_name") or fname(e)  # noqa: E731
+    area = lambda e: (ents.get(e) or {}).get("area")  # noqa: E731
+    remaining = r"verbleib|remaining|_left|lebensdauer|_life"
+    items = []
+
+    vacuum_devices = set()
+    for e in sorted(x for x in states if x.startswith("vacuum.")):
+        dev = (ents.get(e) or {}).get("device")
+        vacuum_devices.add(dev)
+        name = dev_name(e)
+        group = by_device.get(dev, [])
+        cons = sorted(x for x in group if x.startswith("sensor.") and re.search(remaining, x)
+                      and attr(x, "unit_of_measurement") in ("h", "min", "%"))
+        resets = sorted(x for x in group if x.startswith("button.") and re.search(r"reset|zuruck", x))
+        first = slugify(name).split("_")[0]
+        if cons:
+            hours = any(attr(x, "unit_of_measurement") != "%" for x in cons)
+            items.append(template_item(
+                f"{name} warten", "🔧", "Putzen", 15, None, "🧽",
+                sensor={"mode": "below", "entities": cons, "threshold": 0 if hours else 5},
+                action={"service": "button.press", "entities": resets} if resets else None,
+                match_words=[first, "wart"], area_id=area(e),
+                reason=f"Fällig, sobald ein Verschleißteil abgelaufen ist ({len(cons)} Zähler)"
+                       + (", Abhaken setzt die Zähler zurück" if resets
+                          else ". Tipp: Reset-Knöpfe der Integration aktivieren und als Aktion ergänzen")))
+        items.append(template_item(f"{name} leeren", "🤖", "Putzen", 3, 7, "🧽", match_words=[first, "leeren"], area_id=area(e),
+                                   reason="Behälter des Saugroboters, wöchentlich"))
+
+    flags = [e for e in states if e.split(".")[0] in ("input_boolean", "binary_sensor")
+             and re.search(r"wartet|fertig|finished|done|complete|ausraum|leeren", e)]
+    for pattern, exclude, name, icon, category, minutes in (
+            (r"geschirr|spul|dishwash", None, "Geschirrspüler ausräumen", "🫧", "Küche", 12),
+            (r"wasche|waesche|wasch|laundry|washer|washing", r"geschirr|spul|dish", "Wäsche aufhängen", "👕", "Wäsche", 15),
+            (r"trockner|dryer", None, "Trockner ausräumen", "🌬️", "Wäsche", 10)):
+        found = [e for e in flags if re.search(pattern, e) and not (exclude and re.search(exclude, e))]
+        if found:
+            items.append(template_item(name, icon, category, minutes, None,
+                                       sensor={"mode": "above", "entities": found[:1], "threshold": 1},
+                                       reason=f"Fällig, sobald „{fname(found[0])}“ an ist"))
+
+    for e in sorted(states):
+        dev = (ents.get(e) or {}).get("device")
+        if e.startswith("sensor.") and "filter" in e and re.search(remaining, e) and dev not in vacuum_devices:
+            unit = attr(e, "unit_of_measurement")
+            resets = sorted(x for x in by_device.get(dev, []) if x.startswith("button.") and "filter" in x
+                            and re.search(r"reset|zuruck", x))
+            items.append(template_item(
+                f"{dev_name(e)}: Filter wechseln", "🌬️", "Haus & Verwaltung", 10, None, "🧰",
+                sensor={"mode": "below", "entities": [e], "threshold": 5 if unit == "%" else 0},
+                action={"service": "button.press", "entities": resets} if resets else None, area_id=area(e),
+                reason="Fällig, sobald die Filter-Restlaufzeit abgelaufen ist"))
+
+    batteries, seen = [], set()
+    for e in sorted(states, key=lambda x: (HomeAssistant.value(states[x]) is None, x)):
+        if not e.startswith("sensor.") or attr(e, "device_class") != "battery":
+            continue
+        dev = (ents.get(e) or {}).get("device") or e
+        group = " ".join(by_device.get(dev, [e]))
+        if dev in seen or dev in vacuum_devices or re.search(NOT_REPLACEABLE, slugify(dev_name(e)) + " " + e) \
+                or re.search(r"charging|battery_state|ladestatus", group):
+            continue
+        seen.add(dev)
+        batteries.append(e)
+    if batteries:
+        names = sorted({dev_name(e) for e in batteries})
+        items.append(template_item(
+            "Batterien wechseln", "🔋", "Haus & Verwaltung", 10, None, "🧰",
+            sensor={"mode": "below", "entities": batteries, "threshold": 15}, match_words=["batterie"],
+            reason=f"Fällig, sobald eins von {len(batteries)} Geräten unter 15 % fällt: " + ", ".join(names[:6])
+                   + (" …" if len(names) > 6 else "")))
+
+    moisture = sorted(e for e in states if e.startswith("sensor.") and attr(e, "device_class") == "moisture")
+    if moisture:
+        items.append(template_item("Pflanzen gießen", "🪴", "Pflanzen & Ordnung", 10, None, "🪴",
+                                   sensor={"mode": "below", "entities": moisture, "threshold": 20},
+                                   reason=f"Fällig, sobald die Erde an einem von {len(moisture)} Sensoren unter 20 % ist"))
+    if any(attr(e, "device_class") == "smoke" for e in states):
+        items.append(template_item("Rauchmelder testen", "🚨", "Haus & Verwaltung", 10, 365, "🧰",
+                                   reason="Rauchmelder in Home Assistant gefunden"))
+
+    seen_names = set()
+    metered = lambda e: any(attr(x, "unit_of_measurement") in ("W", "kWh")  # noqa: E731 – nur echte Steckdosen
+                            for x in by_device.get((ents.get(e) or {}).get("device"), []))
+    for e in sorted(x for x in states if x.startswith("switch.") and metered(x)):
+        name = dev_name(e)  # ein Vorschlag pro Steckdose, auch wenn sie mehrere Schalter hat (z. B. Kindersicherung)
+        key = slugify(name)
+        for pattern, icon, interval, minutes in ((r"kaffee|espresso|siebtr|moccamaster|jura|delonghi|coffee", "☕", 60, 20),
+                                                 (r"wasserkocher|kettle", "🫖", 30, 10),
+                                                 (r"boiler|warmwasser", "🚿", 365, 30)):
+            if re.search(pattern, key) and key not in seen_names:
+                seen_names.add(key)
+                items.append(template_item(f"{name} entkalken", icon, "Küche", minutes, interval, "🍳",
+                                           match_words=[key.split("_")[0], "entkalk"], area_id=area(e),
+                                           reason=f"Steckdose „{name}“ gefunden"))
+    return items
+
+
+def match_existing(item, tasks):
+    active = [t for t in tasks if t["active"]]
+    found = next((t for t in active if t["name"].lower() == item["name"].lower()), None)
+    ents = set((item.get("sensor") or {}).get("entities", [])) | set((item.get("action") or {}).get("entities", []))
+    if not found and ents:
+        found = next((t for t in active if ents & (set((t["sensor"] or {}).get("entities", []))
+                                                    | set((t["action"] or {}).get("entities", [])))), None)
+    if not found and item.get("match_words"):
+        found = next((t for t in active if all(w in slugify(t["name"]) for w in item["match_words"])), None)
+    return found
+
+
+def mark(item, tasks, fields):
+    """Status: new (anlegen), update (vorhandene Aufgabe ergänzen) oder exists."""
+    t = match_existing(item, tasks)
+    item["existing_id"], item["existing_name"] = (t["id"], t["name"]) if t else (None, None)
+    if not t:
+        item["status"] = "new"
+        return item
+    item["update"] = {k: item[k] for k in fields if item.get(k) and not t.get(k)}
+    item["status"] = "update" if item["update"] else "exists"
+    return item
+
+
+def build_templates(tasks, states, ctx):
+    data = load_templates()
+    catalog = [{"name": c["name"], "icon": c["icon"], "items": [
+        mark(template_item(n, i, c["name"], m, d, c["icon"], kinds=k), tasks, ()) for n, i, m, d, k in c["tasks"]]}
+        for c in data["categories"]]
+    rooms = []
+    for area_id, area_name in sorted(ctx["areas"].items(), key=lambda a: a[1]):
+        kind = room_kind(area_name, data["rooms"])
+        items = [mark(template_item(n, i, c["name"], m, d, c["icon"], area_id=area_id, area_name=area_name),
+                      tasks, ("area_id",))
+                 for c in data["categories"] for n, i, m, d, k in c["tasks"] if kind in k] if kind else []
+        if items:
+            rooms.append({"area_id": area_id, "name": area_name, "items": items})
+    devices = [mark(dict(i, area_name=ctx["areas"].get(i["area_id"])), tasks, ("sensor", "action", "area_id"))
+               for i in detect_devices(states, ctx)]
+    return {"devices": devices, "rooms": rooms, "catalog": catalog}
+
+
+def apply_templates(store, items, actor):
+    created = updated = 0
+    for item in items:
+        if item.get("existing_id"):
+            fields = {k: v for k, v in (item.get("update") or {}).items() if k in ("sensor", "action", "area_id")}
+            if fields:
+                store.save_task(int(item["existing_id"]), fields, actor)
+                updated += 1
+            continue
+        body = {k: item.get(k) for k in ("name", "icon", "minutes", "interval_days", "sensor", "action", "area_id")}
+        body["category_id"] = store.category_for(item["category"], item.get("category_icon") or "", actor) \
+            if item.get("category") else None
+        store.save_task(None, body, actor)
+        created += 1
+    return {"created": created, "updated": updated}
+
+
 # ---------------------------------------------------------------- HTTP
 
 class Handler(BaseHTTPRequestHandler):
@@ -1207,7 +1457,15 @@ class Handler(BaseHTTPRequestHandler):
         if head == "state" and method == "GET":
             return {"me": me, "persons": s.persons(), "categories": s.categories(),
                     "tasks": self.ha.annotate(s.tasks()), "reaction_set": list(REACTIONS), "settings": s.settings(),
-                    "ha": self.ha.enabled or bool(os.environ.get("HAUSHALT_DEV_STATES"))}
+                    "ha": self.ha.enabled or bool(os.environ.get("HAUSHALT_DEV_STATES")), "areas": self.ha.areas()}
+
+        if head == "templates":
+            if method == "GET" and not rest:
+                return build_templates(s.tasks(), self.ha.states(), self.ha.context())
+            if method == "POST" and rest == ["apply"]:
+                result = apply_templates(s, self.body().get("items") or [], actor)
+                self.after_change()
+                return result
 
         if head == "settings" and method == "PATCH":
             s.save_settings(self.body(), actor)

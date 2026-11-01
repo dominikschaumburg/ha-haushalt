@@ -1,0 +1,120 @@
+{
+  "_format": "Aufgabe: [Name, Symbol, Minuten, Rhythmus in Tagen oder null, Raumarten]",
+  "rooms": {
+    "kitchen": ["küche", "kueche", "kuche", "kitchen", "kochnische"],
+    "bathroom": ["bad", "badezimmer", "wc", "toilette", "dusche", "bathroom"],
+    "bedroom": ["schlafzimmer", "schlafen", "bedroom"],
+    "living": ["wohnzimmer", "wohnen", "living"],
+    "office": ["arbeitszimmer", "büro", "buero", "office", "homeoffice"],
+    "hallway": ["flur", "diele", "eingang", "hallway", "korridor"],
+    "balcony": ["balkon", "terrasse", "loggia", "balcony", "terrace"],
+    "garden": ["garten", "garden"],
+    "basement": ["keller", "basement"],
+    "garage": ["garage", "carport"],
+    "kids": ["kinderzimmer", "kids"],
+    "dining": ["esszimmer", "essbereich", "dining"],
+    "laundry": ["waschküche", "waschkueche", "hauswirtschaft", "hwr", "laundry"]
+  },
+  "categories": [
+    {"name": "Küche", "icon": "🍳", "tasks": [
+      ["Küche putzen", "🧼", 25, 7, ["kitchen"]],
+      ["Abwasch nach dem Kochen", "🍽️", 15, null, ["kitchen"]],
+      ["Geschirrspüler ausräumen", "🫧", 12, null, ["kitchen"]],
+      ["Spüle und Abfluss reinigen", "🚰", 10, 14, ["kitchen"]],
+      ["Kühlschrank auswischen", "🧊", 20, 30, ["kitchen"]],
+      ["Gefrierschrank abtauen", "❄️", 45, 180, ["kitchen"]],
+      ["Backofen reinigen", "🔥", 45, 90, ["kitchen"]],
+      ["Mikrowelle reinigen", "📟", 10, 30, ["kitchen"]],
+      ["Dunstabzugsfilter reinigen", "🌀", 20, 90, ["kitchen"]],
+      ["Geschirrspüler-Sieb reinigen", "🫧", 10, 30, ["kitchen"]],
+      ["Kaffeemaschine reinigen", "☕", 15, 14, ["kitchen"]],
+      ["Kaffeemaschine entkalken", "☕", 20, 60, ["kitchen"]],
+      ["Wasserkocher entkalken", "🫖", 10, 30, ["kitchen"]],
+      ["BRITA-Filter wechseln", "🚰", 3, 30, ["kitchen"]],
+      ["Vorräte prüfen", "🥫", 15, 30, ["kitchen"]]
+    ]},
+    {"name": "Putzen", "icon": "🧽", "tasks": [
+      ["Bad putzen", "🛁", 40, 7, ["bathroom"]],
+      ["Toilette putzen", "🚽", 10, 4, ["bathroom"]],
+      ["Dusche entkalken", "🚿", 20, 14, ["bathroom"]],
+      ["Spiegel putzen", "🪞", 5, 7, ["bathroom"]],
+      ["Abfluss reinigen", "🪠", 10, 30, ["bathroom"]],
+      ["Duschvorhang waschen", "🚿", 10, 90, ["bathroom"]],
+      ["Wohnung saugen", "🧹", 25, 7, []],
+      ["Wischen", "🪣", 30, 14, []],
+      ["Staub wischen", "🪶", 20, 14, []],
+      ["Fenster putzen", "🪟", 60, 90, []],
+      ["Türen und Lichtschalter abwischen", "🚪", 15, 60, []],
+      ["Heizkörper reinigen", "♨️", 20, 180, []],
+      ["Polster absaugen", "🛋️", 20, 60, ["living"]],
+      ["Schreibtisch aufräumen", "🗂️", 10, 7, ["office"]],
+      ["Bildschirm und Tastatur reinigen", "⌨️", 10, 30, ["office"]],
+      ["Hausflur fegen", "🚪", 15, 14, ["hallway"]],
+      ["Schuhe putzen", "👞", 15, 30, ["hallway"]],
+      ["Balkon fegen", "🍂", 15, 14, ["balcony"]],
+      ["Gartenmöbel reinigen", "🪑", 30, 90, ["balcony", "garden"]],
+      ["Staubsauger leeren", "🤖", 3, 7, []]
+    ]},
+    {"name": "Wäsche", "icon": "🧺", "tasks": [
+      ["Wäsche waschen", "🌀", 10, null, []],
+      ["Wäsche aufhängen", "👕", 15, null, []],
+      ["Wäsche abhängen und zusammenlegen", "🧺", 20, null, []],
+      ["Bügeln", "👔", 30, null, []],
+      ["Bett neu beziehen", "🛏️", 15, 14, ["bedroom"]],
+      ["Matratze wenden", "🛏️", 10, 90, ["bedroom"]],
+      ["Kleiderschrank ausmisten", "👚", 60, 180, ["bedroom"]],
+      ["Handtücher wechseln", "🧻", 5, 7, ["bathroom"]],
+      ["Waschmaschine reinigen", "🫧", 15, 60, ["laundry", "bathroom"]]
+    ]},
+    {"name": "Müll & Entsorgung", "icon": "🗑️", "tasks": [
+      ["Restmüll runterbringen", "🗑️", 5, 4, []],
+      ["Biomüll runterbringen", "🍌", 5, 3, ["kitchen"]],
+      ["Gelben Sack runterbringen", "🟨", 5, 7, []],
+      ["Altpapier runterbringen", "📦", 5, 7, []],
+      ["Altglas wegbringen", "🍾", 15, 21, []],
+      ["Pfand wegbringen", "♻️", 15, 14, []],
+      ["Mülleimer auswaschen", "🪣", 15, 30, ["kitchen"]],
+      ["Sperrmüll und Elektroschrott wegbringen", "🔌", 30, null, []]
+    ]},
+    {"name": "Einkauf & Kochen", "icon": "🛒", "tasks": [
+      ["Kochen", "🍲", 60, null, []],
+      ["Einkaufen", "🛍️", 30, null, []],
+      ["Einkaufen (groß)", "🛒", 60, null, []],
+      ["Essensplan erstellen", "📝", 15, 7, []],
+      ["Meal Prep", "🥡", 90, null, []],
+      ["Brot backen", "🍞", 30, null, []]
+    ]},
+    {"name": "Pflanzen & Ordnung", "icon": "🪴", "tasks": [
+      ["Pflanzen gießen", "🪴", 10, 4, []],
+      ["Pflanzen pflegen", "🌱", 30, null, []],
+      ["Pflanzen düngen", "🧪", 10, 30, []],
+      ["Balkonpflanzen gießen", "🌻", 10, 2, ["balcony"]],
+      ["Rasen mähen", "🌿", 45, 14, ["garden"]],
+      ["Unkraut jäten", "🌾", 30, 14, ["garden"]],
+      ["Laub harken", "🍂", 45, null, ["garden"]],
+      ["Aufräumen", "📚", 20, null, []],
+      ["Ausmisten", "📦", 60, 90, []],
+      ["Spielzeug aufräumen", "🧸", 15, null, ["kids"]],
+      ["Keller aufräumen", "📦", 60, 180, ["basement"]]
+    ]},
+    {"name": "Haus & Verwaltung", "icon": "🧰", "tasks": [
+      ["Heimwerken", "🛠️", 60, null, []],
+      ["Verwaltung & Papierkram", "📋", 30, null, []],
+      ["Post bearbeiten", "✉️", 10, 7, []],
+      ["Rechnungen bezahlen", "💶", 15, 30, []],
+      ["Arbeiten am Home Assistant", "💻", 60, null, []],
+      ["Rauchmelder testen", "🚨", 10, 365, []],
+      ["Batterien wechseln", "🔋", 10, null, []],
+      ["Heizung entlüften", "♨️", 20, 365, []],
+      ["Fahrrad pflegen", "🚲", 30, 90, []],
+      ["Auto waschen", "🚗", 30, 30, ["garage"]]
+    ]},
+    {"name": "Haustiere", "icon": "🐾", "tasks": [
+      ["Haustier füttern", "🐾", 5, null, []],
+      ["Napf reinigen", "🥣", 5, 2, []],
+      ["Katzenklo reinigen", "🐈", 5, 1, []],
+      ["Gassi gehen", "🐕", 30, null, []],
+      ["Tierarzt-Termin", "🩺", 60, 365, []]
+    ]}
+  ]
+}

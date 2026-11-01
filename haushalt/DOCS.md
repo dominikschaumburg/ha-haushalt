@@ -30,6 +30,16 @@ Bei mehreren Entitäten reicht eine. Der Ring zeigt, wie nah die Regel an der Gr
 
 **Benachrichtigungen**: Unter Einstellungen → Benachrichtigungen bekommt jede Person ihren Dienst (z. B. `notify.mobile_app_iphone`) und es gibt eine Uhrzeit sowie optional „Nur wenn an“ (z. B. `binary_sensor.jemand_zu_hause`) und „Nicht wenn an“ (z. B. `calendar.urlaub`). Aufgaben mit eingeschalteter Benachrichtigung (🔔) melden sich dann einmal am Tag, solange sie fällig sind, bei den in der Aufgabe gewählten Personen. „Erledigt ✅“ in der Nachricht hakt die Aufgabe für diese Person ab und führt die Aktion aus; erledigt jemand die Aufgabe, verschwinden die Nachrichten auf den anderen Geräten. Mit „Alle anderen benachrichtigen, wenn jemand eine Aufgabe erledigt“ bekommen alle übrigen Personen bei jedem neuen Eintrag eine kurze Nachricht (nicht bei Einträgen, die mehr als 6 Stunden nachgetragen werden).
 
+**Vorlagen**: Unter Einstellungen → Aufgaben → „Aus Vorlagen …“ gibt es drei Bereiche zum Anhaken:
+
+- *Eure Geräte*: aus Home Assistant erkannte Geräte mit fertiger Sensor-Regel und Aktion – Saugroboter (Wartung über die Restlaufzeit-Sensoren, Abhaken drückt die Reset-Knöpfe; die Knöpfe sind in der Integration oft deaktiviert und müssen erst aktiviert werden), Spülmaschine, Wasch­maschine und Trockner (über Schalter wie `input_boolean.geschirr_wartet`), Filter mit Restlaufzeit, Batteriegeräte (ohne Handys, Tablets und Akkugeräte), Bodenfeuchte-Sensoren, Rauchmelder sowie Kaffeemaschine, Wasserkocher und Boiler an Steckdosen mit Strommessung.
+- *Eure Räume*: Vorschläge passend zu den Bereichen in Home Assistant; sie bekommen den Raum gleich zugeordnet.
+- *Alle Vorlagen*: der ganze Katalog nach Kategorien.
+
+Was es schon gibt, ist ausgegraut. Passt eine Vorlage zu einer vorhandenen Aufgabe, ergänzt sie diese um Sensor-Regel, Aktion oder Raum, statt eine zweite anzulegen.
+
+**Räume**: Jede Aufgabe kann einen Bereich aus Home Assistant bekommen. Dann lässt sich die Aufgabenliste nach Raum filtern, und die Statistik zeigt, wie viel Zeit in welchem Raum steckt.
+
 **Einstellungen**: Personen (Name, Farbe, aktiv), Aufgaben (Symbol, Kategorie, Rhythmus, Aufwand, Home Assistant), Kategorien, Benachrichtigungen und Export als JSON oder CSV. Aufgaben mit Einträgen werden beim Entfernen archiviert, damit die Statistik erhalten bleibt.
 
 ## Konfiguration
