@@ -57,6 +57,41 @@ export function axisFormat(metric) {
 
 // ---- Liniendiagramm mit Fadenkreuz
 
+/** Gleitender Mittelwert mit Gewichten 1:2:1 (am Rand mit den vorhandenen Nachbarn). */
+export function smooth(values) {
+  return values.map((v, i) => {
+    let sum = 2 * v;
+    let w = 2;
+    if (i > 0) { sum += values[i - 1]; w += 1; }
+    if (i < values.length - 1) { sum += values[i + 1]; w += 1; }
+    return sum / w;
+  });
+}
+
+/** Monotone kubische Kurve (Fritsch-Carlson): weich, ohne über die Punkte hinauszuschießen. */
+function curve(pts) {
+  const n = pts.length;
+  const f = (v) => v.toFixed(1);
+  if (n < 3) return pts.map((p, i) => `${i ? "L" : "M"}${f(p[0])},${f(p[1])}`).join("");
+  const dx = [];
+  const sl = [];
+  for (let i = 0; i < n - 1; i++) {
+    dx.push(pts[i + 1][0] - pts[i][0]);
+    sl.push((pts[i + 1][1] - pts[i][1]) / dx[i]);
+  }
+  const t = [sl[0]];
+  for (let i = 1; i < n - 1; i++) {
+    t.push(sl[i - 1] * sl[i] <= 0 ? 0 : (3 * (dx[i - 1] + dx[i])) / ((2 * dx[i] + dx[i - 1]) / sl[i - 1] + (dx[i] + 2 * dx[i - 1]) / sl[i]));
+  }
+  t.push(sl[n - 2]);
+  let d = `M${f(pts[0][0])},${f(pts[0][1])}`;
+  for (let i = 0; i < n - 1; i++) {
+    const h = dx[i] / 3;
+    d += `C${f(pts[i][0] + h)},${f(pts[i][1] + t[i] * h)} ${f(pts[i + 1][0] - h)},${f(pts[i + 1][1] - t[i + 1] * h)} ${f(pts[i + 1][0])},${f(pts[i + 1][1])}`;
+  }
+  return d;
+}
+
 export function lineChart(el, { labels, tipLabels, series, metric, fmt }) {
   el.innerHTML = "";
   const W = Math.max(280, el.clientWidth);
@@ -83,14 +118,17 @@ export function lineChart(el, { labels, tipLabels, series, metric, fmt }) {
     svg("text", { x: x(i), y: H - 6, class: "tick", "text-anchor": i === 0 ? "start" : i === n - 1 ? "end" : "middle" }, root).textContent = lab;
   });
 
-  for (const s of series) {
-    const pts = s.values.map((v, i) => [x(i), y(v)]);
-    const d = pts.map((p, i) => `${i ? "L" : "M"}${p[0].toFixed(1)},${p[1].toFixed(1)}`).join("");
+  // Geglättete Linie; die echten Werte bleiben als blasse Punkte sichtbar und stehen im Tooltip
+  const smoothed = series.map((s) => smooth(s.values));
+  series.forEach((s, k) => {
+    const pts = smoothed[k].map((v, i) => [x(i), y(v)]);
+    const d = curve(pts);
     svg("path", { d: `${d}L${x(n - 1)},${y(0)}L${x(0)},${y(0)}Z`, fill: s.color, "fill-opacity": 0.1, stroke: "none" }, root);
     svg("path", { d, fill: "none", stroke: s.color, "stroke-width": 2, "stroke-linejoin": "round", "stroke-linecap": "round" }, root);
+    if (n > 2) s.values.forEach((v, i) => svg("circle", { cx: x(i), cy: y(v), r: 2.2, fill: s.color, "fill-opacity": 0.35 }, root));
     const last = pts[pts.length - 1];
     if (last) svg("circle", { cx: last[0], cy: last[1], r: 4, fill: s.color, class: "ring" }, root);
-  }
+  });
 
   const cross = svg("line", { y1: m.t, y2: m.t + ih, class: "cross", visibility: "hidden" }, root);
   const dots = series.map((s) => svg("circle", { r: 5, fill: s.color, class: "ring", visibility: "hidden" }, root));
@@ -104,11 +142,12 @@ export function lineChart(el, { labels, tipLabels, series, metric, fmt }) {
     cross.setAttribute("visibility", "visible");
     series.forEach((s, k) => {
       dots[k].setAttribute("cx", x(i));
-      dots[k].setAttribute("cy", y(s.values[i]));
+      dots[k].setAttribute("cy", y(smoothed[k][i]));
       dots[k].setAttribute("visibility", "visible");
     });
     const rows = [...series].sort((a, b) => b.values[i] - a.values[i])
-      .map((s) => `<div class="tip-row"><i style="background:${s.color}"></i>${esc(s.name)}<b>${fmt(s.values[i])}</b></div>`).join("");
+      .map((s) => `<div class="tip-row"><i style="background:${s.color}"></i>${esc(s.name)}<b>${fmt(s.values[i])}</b></div>`).join("")
+      + (n > 2 ? `<div class="tip-list">Linie geglättet (Mittel mit den Nachbarwerten)</div>` : "");
     tip(box.left + (x(i) / W) * box.width, box.top + (m.t / H) * box.height + 10, `<div class="tip-title">${esc(tipLabels[i])}</div>${rows}`);
   };
   hit.addEventListener("pointermove", move);

@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.8.3
+
+- Statistik → Verlauf: Linien geglättet (gleitender Mittelwert 1:2:1 mit den Nachbarwochen bzw. -monaten, weich gezeichnet ohne Überschwingen). Die echten Werte stehen als blasse Punkte im Diagramm und im Tooltip.
+
 ## 1.8.2
 
 - Kategorie „Pflanzen & Ordnung“ aufgeteilt: Startset und Vorlagen nutzen „Pflanzen“, Aufräumen und Ausmisten gehören zu „Putzen“. Bestehende Installationen bleiben unverändert.
