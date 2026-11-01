@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.6.0
+
+- Lernender Rhythmus: Aus den Abständen zwischen den Erledigungen (Median der letzten 10, ab 3 Abständen seit der letzten Änderung des Rhythmus, mehrere Erledigungen am selben Tag zählen einmal) lernt die App, wie oft eine Aufgabe wirklich anfällt – auch wenn sie vor der Fälligkeit erledigt wird. Bei Aufgaben mit festem Rhythmus ersetzt der gelernte Wert den Standard (⌀), ohne Rhythmus erscheint er als Vorschlag im Editor. Sensor-Regeln gelten unverändert zusätzlich.
+
 ## 1.5.0
 
 - Neue Einstellung unter Benachrichtigungen: Alle anderen bekommen eine Nachricht, wenn jemand eine Aufgabe erledigt (nicht für Einträge, die mehr als 6 Stunden nachgetragen werden). Standardmäßig aus.

@@ -96,16 +96,19 @@ function due(t) {
   return parts.reduce((a, b) => (RANK[b.status] > RANK[a.status] || (RANK[b.status] === RANK[a.status] && b.frac > a.frac) ? b : a));
 }
 
+const interval = (t) => t.effective_interval ?? t.interval_days;
+
 function intervalDue(t) {
-  if (!t.interval_days) return null;
+  const n = interval(t);
+  if (!n) return null;
   if (!t.last_done) return { status: "new", diff: Infinity, frac: 0, label: "Rhythmus startet beim ersten Abhaken" };
   const last = new Date(t.last_done);
   const elapsed = daysBetween(last, new Date());
-  const diff = t.interval_days - elapsed;
-  const frac = Math.min(1, elapsed / t.interval_days);
+  const diff = n - elapsed;
+  const frac = Math.min(1, elapsed / n);
   if (diff < 0) return { status: "overdue", diff, frac, label: `Seit ${plural(-diff, "Tag", "Tagen")} überfällig` };
   if (diff === 0) return { status: "due", diff, frac, label: "Heute fällig" };
-  const soon = diff <= Math.max(1, Math.round(t.interval_days * 0.2));
+  const soon = diff <= Math.max(1, Math.round(n * 0.2));
   return { status: soon ? "soon" : "ok", diff, frac, label: diff === 1 ? "Morgen fällig" : `Fällig in ${diff} Tagen` };
 }
 
@@ -393,7 +396,7 @@ async function openLog({ taskId, entry }) {
   openSheet(`
     <div class="sheet-head">
       <span class="ticon big">${esc(t.icon || "•")}</span>
-      <div><h2>${esc(t.name)}</h2><div class="muted">${[d?.label, t.interval_days ? intervalName(t.interval_days) : "Ohne festen Rhythmus", `≈ ${fmtMin(effort(t))}`].filter(Boolean).join(" · ")}</div></div>
+      <div><h2>${esc(t.name)}</h2><div class="muted">${[d?.label, interval(t) ? `${learnedRhythm(t) ? "⌀ " : ""}${intervalName(interval(t))}` : "Ohne festen Rhythmus", `≈ ${fmtMin(effort(t))}`].filter(Boolean).join(" · ")}</div></div>
       <button class="icon-btn" data-close aria-label="Schließen">✕</button>
     </div>
     ${entry ? `<label class="field"><span>Aufgabe</span><select name="task">${taskOptions}</select></label>` : ""}
@@ -810,7 +813,7 @@ function taskSettingRow(t) {
   return `<button class="setting-row task-row" data-task-edit="${t.id}">
     <span class="ticon sm">${esc(t.icon)}</span><span class="grow">${esc(t.name)}</span>
     <span class="muted small ha-flags">${t.sensor ? '<span title="Fällig nach Sensor">📡</span>' : ""}${t.action ? '<span title="Aktion beim Abhaken">⚡</span>' : ""}${t.notify ? '<span title="Benachrichtigung">🔔</span>' : ""}</span>
-    <span class="muted small">${t.interval_days ? intervalName(t.interval_days) : "—"}</span>
+    <span class="muted small" ${learnedRhythm(t) ? `title="Gelernt aus ${t.learned_interval_from} Abständen, Standard: ${intervalName(t.interval_days)}"` : ""}>${interval(t) ? `${learnedRhythm(t) ? "⌀ " : ""}${intervalName(interval(t))}` : "—"}</span>
     <span class="muted small num" ${t.learned_minutes != null ? `title="Gelernt aus ${t.learned_from} Einträgen, Standard ${t.minutes} min"` : ""}>${t.learned_minutes != null ? "⌀ " : ""}${fmtMin(effort(t))}</span>
   </button>`;
 }
@@ -829,6 +832,25 @@ function learnInfo(t) {
     ${diff ? `<button type="button" class="btn ghost sm" data-adopt="${t.learned_minutes}">Als Standard übernehmen</button>` : ""}</div>`;
 }
 
+const learnedRhythm = (t) => t.interval_days && t.learned_interval;
+
+function learnIntervalInfo(t) {
+  if (t.learned_interval == null) {
+    const left = 3 - t.learned_interval_from + (t.count ? 0 : 1);
+    return `<div class="learn muted small">Noch ${plural(left, "Erledigung", "Erledigungen")} an verschiedenen Tagen bis zum gelernten Rhythmus${t.interval_days ? " – bis dahin gilt der Standard" : ""}.</div>`;
+  }
+  const n = t.learned_interval;
+  const from = `aus den letzten ${t.learned_interval_from} Abständen`;
+  if (!t.interval_days) {
+    return `<div class="learn"><span>Ihr erledigt das etwa <b>${intervalName(n).charAt(0).toLowerCase()}${intervalName(n).slice(1)}</b> (${from})</span>
+      <button type="button" class="btn ghost sm" data-adopt-interval="${n}">Als Rhythmus übernehmen</button></div>`;
+  }
+  const diff = n - t.interval_days;
+  const trend = diff === 0 ? "entspricht dem Standard" : `${diff > 0 ? "+" : "−"}${plural(Math.abs(diff), "Tag", "Tage")} ggü. Standard`;
+  return `<div class="learn"><span>⌀ <b>${intervalName(n)}</b> ${from} · ${trend}</span>
+    ${diff ? `<button type="button" class="btn ghost sm" data-adopt-interval="${n}">Als Standard übernehmen</button>` : ""}</div>`;
+}
+
 function openTaskEditor(t) {
   const isNew = !t;
   t = t || { name: "", icon: "", category_id: S.categories[0]?.id, minutes: 10, interval_days: null, active: 1 };
@@ -844,10 +866,11 @@ function openTaskEditor(t) {
       <label class="field"><span>Rhythmus</span><select name="interval">${INTERVALS.map(([d, l]) => `<option value="${d}" ${(t.interval_days || 0) === d ? "selected" : ""}>${l}</option>`).join("")}<option value="custom" ${custom ? "selected" : ""}>Eigener …</option></select></label>
       <label class="field" data-custom ${custom ? "" : "hidden"}><span>Alle … Tage</span><input type="number" name="days" min="1" value="${t.interval_days || 10}"></label>
     </div>
+    ${isNew ? "" : learnIntervalInfo(t)}
     <label class="field"><span>Standardaufwand</span><div class="stepper"><button type="button" data-step="-5">−</button><input type="number" name="minutes" min="0" value="${t.minutes}" inputmode="numeric"><span>min</span><button type="button" data-step="5">+</button></div></label>
     ${isNew ? "" : learnInfo(t)}
     ${haBlock(t)}
-    <p class="muted small">Beim Abhaken wird der Median der letzten ${LEARN_WINDOW} Einträge vorgeschlagen, sobald es mindestens ${LEARN_MIN} gibt – vorher der Standard. Wer beim Abhaken den Aufwand korrigiert, bringt der App also bei, wie lange es wirklich dauert. Ein neuer Standard setzt das Lernen zurück; bestehende Einträge bleiben unverändert.</p>
+    <p class="muted small">Beim Abhaken wird der Median der letzten ${LEARN_WINDOW} Einträge vorgeschlagen, sobald es mindestens ${LEARN_MIN} gibt – vorher der Standard. Wer beim Abhaken den Aufwand korrigiert, bringt der App also bei, wie lange es wirklich dauert. Genauso lernt der Rhythmus aus den Abständen zwischen den Erledigungen, auch wenn ihr etwas vor der Fälligkeit erledigt; ohne festen Rhythmus bleibt er ein Vorschlag. Ein neuer Standard setzt das jeweilige Lernen zurück; bestehende Einträge bleiben unverändert.</p>
     <div class="sheet-actions">
       ${isNew ? "" : t.active ? `<button type="button" class="btn danger" data-archive>${t.count ? "Archivieren" : "Löschen"}</button>` : `<button type="button" class="btn ghost" data-reactivate>Reaktivieren</button>`}
       <button type="submit" class="btn primary">Speichern</button>
@@ -856,6 +879,13 @@ function openTaskEditor(t) {
     bindHaBlock(dlg);
     form.interval.addEventListener("change", () => { $("[data-custom]", dlg).hidden = form.interval.value !== "custom"; });
     $("[data-adopt]", dlg)?.addEventListener("click", (e) => { form.minutes.value = e.target.dataset.adopt; });
+    $("[data-adopt-interval]", dlg)?.addEventListener("click", (e) => {
+      const n = +e.target.dataset.adoptInterval;
+      const preset = INTERVALS.some(([d]) => d === n);
+      form.interval.value = preset ? String(n) : "custom";
+      form.days.value = n;
+      $("[data-custom]", dlg).hidden = preset;
+    });
     form.icon.addEventListener("input", () => { $(".sheet-head .ticon", dlg).textContent = form.icon.value || "•"; });
     dlg.querySelectorAll("[data-step]").forEach((b) => b.addEventListener("click", () => { form.minutes.value = Math.max(0, (+form.minutes.value || 0) + +b.dataset.step); }));
     form.addEventListener("submit", async (e) => {

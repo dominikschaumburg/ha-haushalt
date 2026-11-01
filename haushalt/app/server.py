@@ -29,6 +29,7 @@ SEED = os.path.join(os.path.dirname(os.path.abspath(__file__)), "seed.json")
 # 172.30.32.2 = Ingress-Proxy des Supervisors, 172.30.32.1 = Home Assistant Core (rest_command)
 LEARN_WINDOW = 10  # so viele letzte Einträge fließen in den gelernten Aufwand ein
 LEARN_MIN = 3  # ab so vielen Einträgen ersetzt der gelernte Wert den Standard
+LEARN_GAPS_MIN = 3  # ab so vielen Abständen zwischen Erledigungen gibt es einen gelernten Rhythmus
 REACTIONS = ("❤️", "🙏", "👏", "🎉", "💪", "🤩")
 INGRESS_IP = "172.30.32.2"
 CORE_IP = "172.30.32.1"
@@ -170,7 +171,10 @@ class Store:
                                ("completions", "sensor_base"), ("persons", "notify_service")):
                 if col not in {r[1] for r in self.db.execute(f"PRAGMA table_info({table})")}:
                     self.db.execute(f"ALTER TABLE {table} ADD COLUMN {col} TEXT")
-        self.db.execute("PRAGMA user_version = 3")
+        if version < 4:
+            if "interval_changed_at" not in {r[1] for r in self.db.execute("PRAGMA table_info(tasks)")}:
+                self.db.execute("ALTER TABLE tasks ADD COLUMN interval_changed_at TEXT")
+        self.db.execute("PRAGMA user_version = 4")
 
     def _seed(self):
         with open(SEED) as f:
@@ -307,7 +311,7 @@ class Store:
         counts = {r["task_id"]: r["n"] for r in self.q(
             "SELECT task_id, COUNT(*) n FROM completions WHERE deleted_at IS NULL GROUP BY task_id")}
         history = {}
-        for r in self.q("SELECT task_id, minutes, created_at FROM completions WHERE deleted_at IS NULL"
+        for r in self.q("SELECT task_id, minutes, created_at, done_at FROM completions WHERE deleted_at IS NULL"
                         " ORDER BY done_at DESC"):
             history.setdefault(r["task_id"], []).append(r)
         for t in tasks:
@@ -320,6 +324,9 @@ class Store:
             t["count"] = counts.get(t["id"], 0)
             t["learned_minutes"], t["learned_from"] = self._learned(t, history.get(t["id"], []))
             t["effective_minutes"] = t["learned_minutes"] if t["learned_minutes"] is not None else t["minutes"]
+            t["learned_interval"], t["learned_interval_from"] = self._learned_interval(t, history.get(t["id"], []))
+            # Nur ein fester Rhythmus wird durch den gelernten ersetzt; ohne Rhythmus bleibt es ein Vorschlag
+            t["effective_interval"] = t["learned_interval"] if t["interval_days"] and t["learned_interval"] else t["interval_days"]
         return tasks
 
     @staticmethod
@@ -332,6 +339,19 @@ class Store:
         mid = len(values) // 2
         median = values[mid] if len(values) % 2 else (values[mid - 1] + values[mid]) / 2
         return int(round(median)), len(values)
+
+    @staticmethod
+    def _learned_interval(task, rows):
+        """Median der letzten Abstände (in Tagen) zwischen Erledigungen seit der letzten Änderung des Rhythmus."""
+        since = task.get("interval_changed_at") or ""
+        days = sorted({datetime.fromisoformat(r["done_at"].replace("Z", "+00:00")).astimezone().date()
+                       for r in rows if r["done_at"] >= since}, reverse=True)[:LEARN_WINDOW + 1]
+        gaps = sorted((a - b).days for a, b in zip(days, days[1:]))
+        if len(gaps) < LEARN_GAPS_MIN:
+            return None, len(gaps)
+        mid = len(gaps) // 2
+        median = gaps[mid] if len(gaps) % 2 else (gaps[mid - 1] + gaps[mid]) / 2
+        return max(1, int(median + 0.5)), len(gaps)
 
     def save_task(self, tid, data, actor):
         fields = {k: data[k] for k in ("name", "icon", "category_id", "minutes", "interval_days", "active", "sort",
@@ -347,6 +367,9 @@ class Store:
                 fields["minutes_changed_at"] = now_iso()  # Lernen beginnt neu ab dem neuen Standard
         if "interval_days" in fields:
             fields["interval_days"] = int(fields["interval_days"]) if fields["interval_days"] else None
+            current = self.q("SELECT interval_days FROM tasks WHERE id = ?", (tid,)) if tid else []
+            if not current or current[0]["interval_days"] != fields["interval_days"]:
+                fields["interval_changed_at"] = now_iso()  # Lernen beginnt neu ab dem neuen Rhythmus
         if "sensor" in fields:
             fields["sensor"] = self._clean_sensor(fields["sensor"])
         if "action" in fields:
@@ -571,7 +594,7 @@ class Store:
             "persons": ("id", "name", "ha_user_id", "color", "active", "created_at", "notify_service"),
             "categories": ("id", "name", "icon", "sort"),
             "tasks": ("id", "name", "icon", "category_id", "minutes", "interval_days", "active", "sort", "created_at",
-                      "minutes_changed_at", "sensor", "action", "notify"),
+                      "minutes_changed_at", "sensor", "action", "notify", "interval_changed_at"),
             "completions": ("id", "task_id", "done_at", "minutes", "note", "created_at", "created_by",
                             "deleted_at", "deleted_by", "sensor_base"),
             "audit": ("id", "at", "actor", "action", "ref", "data"),
@@ -612,17 +635,18 @@ def fmt_num(v):
 
 def interval_due(t, today):
     """Fälligkeit aus dem Rhythmus (wie due() im Frontend)."""
-    if not t["interval_days"] or not t["last_done"]:
+    interval = t.get("effective_interval") or t["interval_days"]
+    if not interval or not t["last_done"]:
         return None
     last = datetime.fromisoformat(t["last_done"].replace("Z", "+00:00")).astimezone().date()
     elapsed = (today - last).days
-    diff = t["interval_days"] - elapsed
-    frac = min(1, elapsed / t["interval_days"])
+    diff = interval - elapsed
+    frac = min(1, elapsed / interval)
     if diff < 0:
         return {"status": "overdue", "frac": frac, "label": f"Seit {-diff} {'Tag' if diff == -1 else 'Tagen'} überfällig"}
     if diff == 0:
         return {"status": "due", "frac": frac, "label": "Heute fällig"}
-    soon = diff <= max(1, round(t["interval_days"] * 0.2))
+    soon = diff <= max(1, round(interval * 0.2))
     return {"status": "soon" if soon else "ok", "frac": frac, "label": "Morgen fällig" if diff == 1 else f"Fällig in {diff} Tagen"}
 
 

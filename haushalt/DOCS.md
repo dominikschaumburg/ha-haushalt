@@ -14,6 +14,8 @@ Der farbige Ring um das Symbol zeigt, wie viel vom Rhythmus abgelaufen ist: grü
 
 **Aufwand**: Jede Aufgabe hat einen Standardaufwand. Sobald es seit der letzten Änderung des Standards mindestens 3 Einträge gibt, schlägt die App stattdessen den Median der letzten 10 Einträge vor – auch beim schnellen Abhaken. Wer den Aufwand beim Abhaken korrigiert, bringt der App also bei, wie lange eine Aufgabe wirklich dauert. Der Median reagiert erst, wenn mehrere Einträge abweichen, einzelne Ausreißer verschieben ihn nicht. Im Aufgaben-Editor steht der gelernte Wert neben dem Standard und lässt sich übernehmen; ein neuer Standard startet das Lernen neu.
 
+**Rhythmus**: Auch der Rhythmus lernt mit – aus den Abständen zwischen den Erledigungen, egal ob eine Aufgabe fällig war. Ab 3 Abständen seit der letzten Änderung des Rhythmus gilt der Median der letzten 10 (mehrere Erledigungen am selben Tag zählen einmal). Bei Aufgaben mit festem Rhythmus ersetzt er den Standard und ist mit ⌀ markiert; bei Aufgaben ohne Rhythmus schlägt der Editor ihn nur vor („Als Rhythmus übernehmen“). Ein neuer Rhythmus startet das Lernen neu.
+
 **Fälligkeit aus Sensoren**: Im Aufgaben-Editor unter „Home Assistant“ kann eine Aufgabe zusätzlich zum Rhythmus auf Entitäten hören. Fällig ist sie, sobald Rhythmus oder Sensor-Regel greift – die Sensor-Regel gilt auch, wenn die Aufgabe noch nie abgehakt wurde.
 
 | Regel | Fällig, wenn | Beispiel |
