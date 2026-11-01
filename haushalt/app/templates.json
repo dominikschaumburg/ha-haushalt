@@ -53,7 +53,11 @@
       ["Schuhe putzen", "👞", 15, 30, ["hallway"]],
       ["Balkon fegen", "🍂", 15, 14, ["balcony"]],
       ["Gartenmöbel reinigen", "🪑", 30, 90, ["balcony", "garden"]],
-      ["Staubsauger leeren", "🤖", 3, 7, []]
+      ["Staubsauger leeren", "🤖", 3, 7, []],
+      ["Aufräumen", "📚", 20, null, []],
+      ["Ausmisten", "📦", 60, 90, []],
+      ["Spielzeug aufräumen", "🧸", 15, null, ["kids"]],
+      ["Keller aufräumen", "📦", 60, 180, ["basement"]]
     ]},
     {"name": "Wäsche", "icon": "🧺", "tasks": [
       ["Wäsche waschen", "🌀", 10, null, []],
@@ -84,18 +88,14 @@
       ["Meal Prep", "🥡", 90, null, []],
       ["Brot backen", "🍞", 30, null, []]
     ]},
-    {"name": "Pflanzen & Ordnung", "icon": "🪴", "tasks": [
+    {"name": "Pflanzen", "icon": "🪴", "tasks": [
       ["Pflanzen gießen", "🪴", 10, 4, []],
       ["Pflanzen pflegen", "🌱", 30, null, []],
       ["Pflanzen düngen", "🧪", 10, 30, []],
       ["Balkonpflanzen gießen", "🌻", 10, 2, ["balcony"]],
       ["Rasen mähen", "🌿", 45, 14, ["garden"]],
       ["Unkraut jäten", "🌾", 30, 14, ["garden"]],
-      ["Laub harken", "🍂", 45, null, ["garden"]],
-      ["Aufräumen", "📚", 20, null, []],
-      ["Ausmisten", "📦", 60, 90, []],
-      ["Spielzeug aufräumen", "🧸", 15, null, ["kids"]],
-      ["Keller aufräumen", "📦", 60, 180, ["basement"]]
+      ["Laub harken", "🍂", 45, null, ["garden"]]
     ]},
     {"name": "Haus & Verwaltung", "icon": "🧰", "tasks": [
       ["Heimwerken", "🛠️", 60, null, []],

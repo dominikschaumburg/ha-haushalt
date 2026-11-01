@@ -5,7 +5,7 @@
     {"name": "Wäsche", "icon": "🧺"},
     {"name": "Müll & Entsorgung", "icon": "🗑️"},
     {"name": "Einkauf & Kochen", "icon": "🛒"},
-    {"name": "Pflanzen & Ordnung", "icon": "🪴"}
+    {"name": "Pflanzen", "icon": "🪴"}
   ],
   "tasks": [
     {"name": "Kochen", "icon": "🍲", "category": "Einkauf & Kochen", "minutes": 40},
@@ -32,7 +32,7 @@
     {"name": "Altpapier runterbringen", "icon": "📦", "category": "Müll & Entsorgung", "minutes": 5, "interval_days": 7},
     {"name": "Altglas wegbringen", "icon": "🍾", "category": "Müll & Entsorgung", "minutes": 15, "interval_days": 21},
     {"name": "Pfand wegbringen", "icon": "♻️", "category": "Müll & Entsorgung", "minutes": 15, "interval_days": 14},
-    {"name": "Pflanzen gießen", "icon": "🪴", "category": "Pflanzen & Ordnung", "minutes": 10, "interval_days": 4},
-    {"name": "Aufräumen", "icon": "📚", "category": "Pflanzen & Ordnung", "minutes": 20}
+    {"name": "Pflanzen gießen", "icon": "🪴", "category": "Pflanzen", "minutes": 10, "interval_days": 4},
+    {"name": "Aufräumen", "icon": "📚", "category": "Putzen", "minutes": 20}
   ]
 }

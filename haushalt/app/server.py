@@ -1310,7 +1310,7 @@ def detect_devices(states, ctx):
 
     moisture = sorted(e for e in states if e.startswith("sensor.") and attr(e, "device_class") == "moisture")
     if moisture:
-        items.append(template_item("Pflanzen gießen", "🪴", "Pflanzen & Ordnung", 10, None, "🪴",
+        items.append(template_item("Pflanzen gießen", "🪴", "Pflanzen", 10, None, "🪴",
                                    sensor={"mode": "below", "entities": moisture, "threshold": 20},
                                    reason=f"Fällig, sobald die Erde an einem von {len(moisture)} Sensoren unter 20 % ist"))
     if any(attr(e, "device_class") == "smoke" for e in states):

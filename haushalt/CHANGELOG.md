@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.8.2
+
+- Kategorie „Pflanzen & Ordnung“ aufgeteilt: Startset und Vorlagen nutzen „Pflanzen“, Aufräumen und Ausmisten gehören zu „Putzen“. Bestehende Installationen bleiben unverändert.
+
 ## 1.8.1
 
 - Nach einer Aktion beim Abhaken (z. B. Verbrauchszähler zurücksetzen) werden die Sensoren nach 10 Sekunden erneut gelesen und die Ansicht aktualisiert – vorher blieb die Aufgabe bis zum nächsten Laden fällig.
