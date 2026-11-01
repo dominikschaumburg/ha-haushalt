@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.8.4
+
+- Sensor-Regeln mit An/Aus-Meldern (z. B. „Wäsche wartet“): Wer nach dem Einschalten abhakt, erledigt die Aufgabe, bis der Melder erneut auslöst. Bisher blieb sie fällig, solange der Melder an war.
+- Vorlagen für Geschirrspüler, Wäsche und Trockner schalten einen `input_boolean`-Melder beim Abhaken aus.
+
 ## 1.8.3
 
 - Statistik → Verlauf: Linien geglättet (gleitender Mittelwert 1:2:1 mit den Nachbarwochen bzw. -monaten, weich gezeichnet ohne Überschwingen). Die echten Werte stehen als blasse Punkte im Diagramm und im Tooltip.

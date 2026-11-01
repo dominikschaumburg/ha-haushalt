@@ -872,6 +872,7 @@ class HomeAssistant:
             if v is None:
                 continue
             unit = st["attributes"].get("unit_of_measurement") or ""
+            flag = re.fullmatch(r"-?[\d.]+(e-?\d+)?", str(st["state"])) is None  # an/aus statt Zahl
             if mode == "below":
                 peak = peaks.get(e)
                 if peak is None or v > peak:
@@ -882,6 +883,10 @@ class HomeAssistant:
                 shown = v
             elif mode == "above":
                 hit = v >= thr
+                # Ein Melder (z. B. „Wäsche wartet“) gilt als erledigt, wenn nach dem Einschalten abgehakt wurde
+                if hit and flag and t.get("last_done") and st.get("last_changed") \
+                        and t["last_done"] >= parse_iso(st["last_changed"]):
+                    hit = False
                 frac = 1 if hit else v / thr if thr > 0 else 0
                 shown = v
             else:
@@ -889,7 +894,6 @@ class HomeAssistant:
                 shown = v - b if v >= b else v  # Zähler zurückgesetzt → ab null weiterzählen
                 hit = shown >= thr
                 frac = shown / thr
-            flag = re.fullmatch(r"-?[\d.]+(e-?\d+)?", str(st["state"])) is None  # an/aus statt Zahl
             items.append({"name": name, "value": shown, "unit": unit, "hit": hit, "frac": max(0, min(1, frac)),
                           "flag": flag})
         if not items:
@@ -1273,9 +1277,13 @@ def detect_devices(states, ctx):
             (r"trockner|dryer", None, "Trockner ausräumen", "🌬️", "Wäsche", 10)):
         found = [e for e in flags if re.search(pattern, e) and not (exclude and re.search(exclude, e))]
         if found:
+            resettable = found[0].startswith("input_boolean.")
             items.append(template_item(name, icon, category, minutes, None,
                                        sensor={"mode": "above", "entities": found[:1], "threshold": 1},
-                                       reason=f"Fällig, sobald „{fname(found[0])}“ an ist"))
+                                       action={"service": "input_boolean.turn_off", "entities": found[:1]}
+                                       if resettable else None,
+                                       reason=f"Fällig, sobald „{fname(found[0])}“ an ist"
+                                              + (", Abhaken schaltet ihn aus" if resettable else "")))
 
     for e in sorted(states):
         dev = (ents.get(e) or {}).get("device")
