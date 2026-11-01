@@ -36,6 +36,7 @@ INGRESS_IP = "172.30.32.2"
 CORE_IP = "172.30.32.1"
 SENSOR_MODES = ("below", "above", "increase")
 SOON_FRAC = 0.8  # ab diesem Anteil gilt eine Sensor-Regel als „bald fällig“
+ACTION_SETTLE = 10  # Sekunden, bis Integrationen nach einer Aktion neue Werte melden (Roborock braucht ~7 s)
 # zone.home zählt die Personen zu Hause und existiert in jeder Installation
 DEFAULT_SETTINGS = {"notify_time": "18:00", "notify_require_on": "zone.home", "notify_require_off": "", "notify_done": "",
                     "onboarding_done": "", "notified_on": ""}
@@ -904,7 +905,8 @@ class HomeAssistant:
             what = ", ".join(f"{i['name']} {u(i)}" if with_name else u(i) for i in hits)
             label = f"Fällig: {what}" + (" seit dem Abhaken" if mode == "increase" else "")
             return {"status": "due", "frac": 1, "label": label, "items": items}
-        top = max(items, key=lambda i: i["frac"])
+        # Am nächsten an der Grenze; bei Gleichstand (z. B. alles frisch zurückgesetzt) der kleinste Restwert
+        top = max(items, key=lambda i: (i["frac"], -i["value"] if mode == "below" else i["value"]))
         unit = f" {top['unit']}" if top["unit"] else ""
         if mode == "below":
             label = f"Noch {u(top)}" + (f" · {top['name']}" if with_name else "")
@@ -963,6 +965,10 @@ class HomeAssistant:
             self.notify(service, {"message": "clear_notification", "data": {"tag": f"haushalt_{task['id']}"}})
         self.notify_done(completion, task, names)
         self._states_at = 0  # Sensoren haben sich durch die Aktion vermutlich geändert
+        if action:  # manche Integrationen melden die neuen Werte erst nach ein paar Sekunden
+            time.sleep(ACTION_SETTLE)
+            self._states_at = 0
+            self.wake.set()
 
     def fire(self, event, data):
         if not self.enabled:

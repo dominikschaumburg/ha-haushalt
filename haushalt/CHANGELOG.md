@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.8.1
+
+- Nach einer Aktion beim Abhaken (z. B. Verbrauchszähler zurücksetzen) werden die Sensoren nach 10 Sekunden erneut gelesen und die Ansicht aktualisiert – vorher blieb die Aufgabe bis zum nächsten Laden fällig.
+- Sensor-Regel „fällt auf die Grenze“ zeigt bei Gleichstand das Teil mit dem kleinsten Restwert.
+
 ## 1.8.0
 
 - Einfacher einrichten: „Erste Schritte“ auf der Aufgabenseite (Personen, Benachrichtigungen, Vorlagen), bis man sie mit „Fertig“ schließt.

@@ -378,6 +378,8 @@ async function afterLogged(c) {
   });
   await loadState();
   setTimeout(render, 350);
+  // Nach einer Aktion (z. B. Zähler zurücksetzen) melden Integrationen neue Werte erst verzögert
+  if (t.action) setTimeout(async () => { if (!$("#sheet").open) { await loadState(); render(); } }, 12000);
 }
 
 // ---------------------------------------------------------------- Sheet: erfassen / bearbeiten
