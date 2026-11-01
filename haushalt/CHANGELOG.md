@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.4.0
+
+- Fälligkeit aus Sensoren: Aufgaben können zusätzlich zum Rhythmus auf Home-Assistant-Entitäten hören – „Wert fällt auf die Grenze“ (z. B. Restlaufzeit von Saugroboter-Filtern), „Wert erreicht die Grenze“ (z. B. Zähler) oder „Zuwachs seit dem Abhaken“ (z. B. kWh eines Energiezählers). Fällig ist, was zuerst greift.
+- Aktion beim Abhaken: ein Home-Assistant-Dienst mit optionalen Ziel-Entitäten, z. B. `button.press` zum Zurücksetzen von Verbrauchsteilen.
+- Benachrichtigungen: einmal am Tag zur eingestellten Uhrzeit für fällige Aufgaben mit 🔔, pro Aufgabe für ausgewählte Personen, optional nur wenn eine Entität an bzw. aus ist. „Erledigt ✅“ in der Nachricht hakt die Aufgabe ab; offene Nachrichten verschwinden, sobald jemand die Aufgabe erledigt.
+- `sensor.haushalt_faellig` berücksichtigt Sensor-Regeln; das Attribut `details` enthält jetzt den Status als Text.
+
 ## 1.3.1
 
 - Aufgabenansicht: Kategorien und Aufgaben sind nach Häufigkeit sortiert, das am häufigsten Erledigte steht oben. „Jetzt dran“ und „Demnächst“ bleiben nach Dringlichkeit sortiert.

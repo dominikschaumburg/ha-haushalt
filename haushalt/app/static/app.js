@@ -3,7 +3,7 @@ import { esc, lineChart, heatmap, heatLegend, groupedColumns, splitBar, dayKey, 
 // ---------------------------------------------------------------- Zustand & API
 
 const S = {
-  me: null, persons: [], categories: [], tasks: [], reaction_set: [],
+  me: null, persons: [], categories: [], tasks: [], reaction_set: [], settings: {}, ha: false, catalog: null,
   view: new URLSearchParams(location.search).get("v") || localGet("view") || "tasks",
   search: "",
   history: { days: 30, person: "all", category: "all", deleted: false, rows: [] },
@@ -84,8 +84,20 @@ const INTERVALS = [
 ];
 const intervalName = (n) => INTERVALS.find(([d]) => d === n)?.[1] || `Alle ${n} Tage`;
 
+const RANK = { overdue: 4, due: 3, soon: 2, ok: 1 };
+
+/** Dringendere von Rhythmus und Sensor-Regel (die Sensor-Regel gilt auch vor dem ersten Abhaken). */
 function due(t) {
-  if (!t.interval_days || !t.active) return null;
+  if (!t.active) return null;
+  const iv = intervalDue(t);
+  const sv = t.sensor_state && { ...t.sensor_state, diff: { due: 0, soon: 1 }[t.sensor_state.status] ?? 99 };
+  const parts = [iv, sv].filter((d) => d && RANK[d.status]);
+  if (!parts.length) return iv || sv || null;
+  return parts.reduce((a, b) => (RANK[b.status] > RANK[a.status] || (RANK[b.status] === RANK[a.status] && b.frac > a.frac) ? b : a));
+}
+
+function intervalDue(t) {
+  if (!t.interval_days) return null;
   if (!t.last_done) return { status: "new", diff: Infinity, frac: 0, label: "Rhythmus startet beim ersten Abhaken" };
   const last = new Date(t.last_done);
   const elapsed = daysBetween(last, new Date());
@@ -754,6 +766,7 @@ function renderSettings(el) {
       <button class="btn ghost sm" data-add-cat>+ Kategorie</button>
       ${archived.length ? `<details class="archived"><summary>Archiviert (${archived.length})</summary><div class="list">${archived.map(taskSettingRow).join("")}</div></details>` : ""}
     </section>
+    ${S.ha ? notifyCard() : ""}
     <section class="card">
       <h2>Daten</h2>
       <p class="muted">Alle Einträge liegen in einer SQLite-Datenbank im App-Ordner und sind Teil der Home-Assistant-Backups. Gelöschte Einträge bleiben erhalten und lassen sich im Verlauf wiederherstellen.</p>
@@ -772,6 +785,7 @@ function renderSettings(el) {
     if (!name) return;
     try { await api("persons", { method: "POST", body: { name } }); await loadState(); renderSettings(el); } catch (e) { fail(e); }
   });
+  bindNotifyCard(el);
   el.querySelectorAll("[data-task-edit]").forEach((b) => b.addEventListener("click", () => openTaskEditor(task(+b.dataset.taskEdit))));
   $("[data-add-task]", el).addEventListener("click", () => openTaskEditor(null));
   $("[data-add-cat]", el).addEventListener("click", () => openCategoryEditor(null));
@@ -795,6 +809,7 @@ function renderSettings(el) {
 function taskSettingRow(t) {
   return `<button class="setting-row task-row" data-task-edit="${t.id}">
     <span class="ticon sm">${esc(t.icon)}</span><span class="grow">${esc(t.name)}</span>
+    <span class="muted small ha-flags">${t.sensor ? '<span title="Fällig nach Sensor">📡</span>' : ""}${t.action ? '<span title="Aktion beim Abhaken">⚡</span>' : ""}${t.notify ? '<span title="Benachrichtigung">🔔</span>' : ""}</span>
     <span class="muted small">${t.interval_days ? intervalName(t.interval_days) : "—"}</span>
     <span class="muted small num" ${t.learned_minutes != null ? `title="Gelernt aus ${t.learned_from} Einträgen, Standard ${t.minutes} min"` : ""}>${t.learned_minutes != null ? "⌀ " : ""}${fmtMin(effort(t))}</span>
   </button>`;
@@ -831,12 +846,14 @@ function openTaskEditor(t) {
     </div>
     <label class="field"><span>Standardaufwand</span><div class="stepper"><button type="button" data-step="-5">−</button><input type="number" name="minutes" min="0" value="${t.minutes}" inputmode="numeric"><span>min</span><button type="button" data-step="5">+</button></div></label>
     ${isNew ? "" : learnInfo(t)}
+    ${haBlock(t)}
     <p class="muted small">Beim Abhaken wird der Median der letzten ${LEARN_WINDOW} Einträge vorgeschlagen, sobald es mindestens ${LEARN_MIN} gibt – vorher der Standard. Wer beim Abhaken den Aufwand korrigiert, bringt der App also bei, wie lange es wirklich dauert. Ein neuer Standard setzt das Lernen zurück; bestehende Einträge bleiben unverändert.</p>
     <div class="sheet-actions">
       ${isNew ? "" : t.active ? `<button type="button" class="btn danger" data-archive>${t.count ? "Archivieren" : "Löschen"}</button>` : `<button type="button" class="btn ghost" data-reactivate>Reaktivieren</button>`}
       <button type="submit" class="btn primary">Speichern</button>
     </div>`, (dlg) => {
     const form = $("form", dlg);
+    bindHaBlock(dlg);
     form.interval.addEventListener("change", () => { $("[data-custom]", dlg).hidden = form.interval.value !== "custom"; });
     $("[data-adopt]", dlg)?.addEventListener("click", (e) => { form.minutes.value = e.target.dataset.adopt; });
     form.icon.addEventListener("input", () => { $(".sheet-head .ticon", dlg).textContent = form.icon.value || "•"; });
@@ -847,6 +864,7 @@ function openTaskEditor(t) {
         name: form.name.value, icon: form.icon.value.trim(), minutes: +form.minutes.value || 0,
         category_id: form.category.value ? +form.category.value : null,
         interval_days: form.interval.value === "custom" ? +form.days.value || null : +form.interval.value || null,
+        ...haValues(dlg, t),
       };
       try {
         await api(isNew ? "tasks" : `tasks/${t.id}`, { method: isNew ? "POST" : "PATCH", body });
@@ -869,6 +887,140 @@ function openTaskEditor(t) {
       await loadState();
       render();
     });
+  });
+}
+
+// ---------------------------------------------------------------- Home Assistant: Sensor-Regel, Aktion, Benachrichtigung
+
+const SENSOR_MODES = [
+  ["", "Aus"], ["below", "Fällig, wenn ein Wert auf die Grenze fällt"], ["above", "Fällig, wenn ein Wert die Grenze erreicht"],
+  ["increase", "Fällig nach Zuwachs seit dem Abhaken"],
+];
+const SERVICES = ["button.press", "input_button.press", "counter.reset", "script.turn_on", "switch.turn_off", "switch.turn_on"];
+
+async function loadCatalog() {
+  if (!S.catalog) S.catalog = await api("ha/catalog").catch(() => ({ entities: [], notify: [] }));
+  return S.catalog;
+}
+
+function entityHint(id) {
+  const e = S.catalog?.entities.find((x) => x.id === id);
+  if (!e) return id ? "unbekannt oder deaktiviert" : "";
+  const num = e.state !== "" && !isNaN(+e.state) ? (+e.state).toLocaleString("de-DE", { maximumFractionDigits: 2 }) : e.state;
+  return `${esc(e.name)} · ${esc(num)}${e.unit ? ` ${esc(e.unit)}` : ""}`;
+}
+
+function entityRow(id = "") {
+  return `<div class="entity-row"><div class="entity-in"><input type="text" list="ha-entities-all" value="${esc(id)}" placeholder="sensor.…" autocapitalize="off" spellcheck="false"><small class="muted">${entityHint(id)}</small></div>
+    <button type="button" class="icon-btn" data-del-entity aria-label="Entität entfernen">✕</button></div>`;
+}
+
+function haBlock(t) {
+  const notifiable = activePersons();
+  const withService = notifiable.filter((p) => p.notify_service).map((p) => String(p.id));
+  const selected = t.notify ? t.notify.map(String) : withService.length ? withService : notifiable.map((p) => String(p.id));
+  const sens = t.sensor || { mode: "", entities: [], threshold: 0 };
+  return `<details class="ha-block" ${t.sensor || t.action || t.notify ? "open" : ""}>
+    <summary>Home Assistant <span class="muted small">Sensor, Aktion, Benachrichtigung</span></summary>
+    <label class="field"><span>Fälligkeit aus Sensoren</span><select name="smode">${SENSOR_MODES.map(([v, l]) => `<option value="${v}" ${sens.mode === v ? "selected" : ""}>${l}</option>`).join("")}</select></label>
+    <div data-sensor ${sens.mode ? "" : "hidden"}>
+      <div class="field"><span>Entitäten <em class="muted">eine reicht, mehrere: fällig, sobald eine greift</em></span>
+        <div data-entities="sensor">${(sens.entities.length ? sens.entities : [""]).map(entityRow).join("")}</div>
+        <button type="button" class="btn ghost sm" data-add-entity="sensor">+ Entität</button></div>
+      <label class="field"><span data-thr-label>Grenze</span><input type="number" step="any" name="sthreshold" value="${sens.threshold ?? 0}"></label>
+      ${t.sensor_state ? `<div class="learn"><span>Jetzt: <b>${esc(t.sensor_state.label)}</b></span></div>` : ""}
+    </div>
+    <label class="field"><span>Beim Abhaken ausführen</span><input type="text" name="aservice" list="ha-services" value="${esc(t.action?.service || "")}" placeholder="z. B. button.press – leer = nichts" autocapitalize="off" spellcheck="false"></label>
+    <div class="field" data-action ${t.action ? "" : "hidden"}><span>Ziel-Entitäten <em class="muted">optional</em></span>
+      <div data-entities="action">${(t.action?.entities?.length ? t.action.entities : [""]).map(entityRow).join("")}</div>
+      <button type="button" class="btn ghost sm" data-add-entity="action">+ Entität</button></div>
+    <div class="field"><span>Benachrichtigen</span>
+      <label class="toggle"><input type="checkbox" name="notify" ${t.notify ? "checked" : ""}> Wenn fällig, täglich um ${esc(S.settings.notify_time || "18:00")} Uhr</label>
+      <div data-notify ${t.notify ? "" : "hidden"}>${chips("notify", notifiable.map((p) => ({ value: String(p.id), html: `${avatar(p, "sm")}${esc(p.name)}${p.notify_service ? "" : ' <em class="muted">ohne Dienst</em>'}` })), selected)}</div>
+    </div>
+    <datalist id="ha-entities-all"></datalist>
+    <datalist id="ha-services">${SERVICES.map((x) => `<option value="${x}">`).join("")}</datalist>
+  </details>`;
+}
+
+function bindHaBlock(dlg) {
+  const form = $("form", dlg);
+  bindChips(dlg);
+  const thrLabel = () => {
+    $("[data-thr-label]", dlg).textContent = { below: "Fällig bei höchstens", above: "Fällig ab", increase: "Fällig nach Zuwachs von" }[form.smode.value] || "Grenze";
+  };
+  thrLabel();
+  form.smode.addEventListener("change", () => { $("[data-sensor]", dlg).hidden = !form.smode.value; thrLabel(); });
+  form.aservice.addEventListener("input", () => { $("[data-action]", dlg).hidden = !form.aservice.value.trim(); });
+  form.notify.addEventListener("change", () => { $("[data-notify]", dlg).hidden = !form.notify.checked; });
+  const block = $(".ha-block", dlg);
+  block.addEventListener("click", (e) => {
+    const add = e.target.closest("[data-add-entity]");
+    if (add) $(`[data-entities="${add.dataset.addEntity}"]`, dlg).insertAdjacentHTML("beforeend", entityRow());
+    const del = e.target.closest("[data-del-entity]");
+    if (del) del.closest(".entity-row").remove();
+  });
+  block.addEventListener("input", (e) => {
+    if (e.target.matches(".entity-in input")) e.target.nextElementSibling.innerHTML = entityHint(e.target.value.trim());
+  });
+  loadCatalog().then((c) => {
+    $("#ha-entities-all", dlg).innerHTML = c.entities.map((e) => `<option value="${e.id}">${esc(e.name)}</option>`).join("");
+    const scripts = c.entities.filter((e) => e.id.startsWith("script.")).map((e) => `<option value="${e.id}">${esc(e.name)}</option>`);
+    $("#ha-services", dlg).insertAdjacentHTML("beforeend", scripts.join(""));
+    dlg.querySelectorAll(".entity-in input").forEach((i) => { i.nextElementSibling.innerHTML = entityHint(i.value.trim()); });
+  });
+}
+
+function haValues(dlg, t) {
+  const form = $("form", dlg);
+  const ids = (kind) => [...dlg.querySelectorAll(`[data-entities="${kind}"] .entity-in input`)].map((i) => i.value.trim()).filter(Boolean);
+  const mode = form.smode.value;
+  const service = form.aservice.value.trim();
+  return {
+    sensor: mode && ids("sensor").length ? { mode, entities: ids("sensor"), threshold: +form.sthreshold.value || 0, base: t.sensor?.base } : null,
+    action: service ? { service, entities: ids("action") } : null,
+    notify: form.notify.checked ? chipValues(dlg, "notify").map(Number) : null,
+  };
+}
+
+function notifyCard() {
+  const st = S.settings;
+  return `<section class="card" data-notify-card>
+    <h2>Benachrichtigungen</h2>
+    <p class="muted">Aufgaben mit 🔔 melden sich einmal am Tag, wenn sie fällig sind. „Erledigt ✅“ in der Nachricht hakt sie für dich ab und führt die Aktion der Aufgabe aus.</p>
+    <div class="grid2">
+      <label class="field"><span>Uhrzeit</span><input type="time" name="notify_time" value="${esc(st.notify_time)}"></label>
+      <label class="field"><span>Nur wenn an</span><input type="text" name="notify_require_on" list="ha-entities" value="${esc(st.notify_require_on)}" placeholder="binary_sensor.jemand_zu_hause" autocapitalize="off" spellcheck="false"></label>
+      <label class="field"><span>Nicht wenn an</span><input type="text" name="notify_require_off" list="ha-entities" value="${esc(st.notify_require_off)}" placeholder="calendar.urlaub" autocapitalize="off" spellcheck="false"></label>
+    </div>
+    <div class="list">${activePersons().map((p) => `<div class="setting-row" data-notify-person="${p.id}">
+      ${avatar(p)}<span class="notify-name">${esc(p.name)}</span>
+      <input type="text" list="ha-notify" value="${esc(p.notify_service || "")}" placeholder="notify.mobile_app_…" aria-label="Benachrichtigungsdienst für ${esc(p.name)}" autocapitalize="off" spellcheck="false">
+      <button class="btn ghost sm" data-test ${p.notify_service ? "" : "disabled"}>Test</button>
+    </div>`).join("")}</div>
+    <datalist id="ha-notify"></datalist><datalist id="ha-entities"></datalist>
+  </section>`;
+}
+
+function bindNotifyCard(el) {
+  const card = $("[data-notify-card]", el);
+  if (!card) return;
+  card.querySelectorAll("input[name]").forEach((i) => i.addEventListener("change", async () => {
+    try { S.settings = await api("settings", { method: "PATCH", body: { [i.name]: i.value } }); toast("Gespeichert"); } catch (e) { fail(e); }
+  }));
+  card.querySelectorAll("[data-notify-person]").forEach((row) => {
+    const id = +row.dataset.notifyPerson;
+    $("input", row).addEventListener("change", async (e) => {
+      try { await api(`persons/${id}`, { method: "PATCH", body: { notify_service: e.target.value.trim() || null } }); await loadState(); renderSettings(el); } catch (err) { fail(err); }
+    });
+    $("[data-test]", row).addEventListener("click", async () => {
+      try { await api(`persons/${id}/test`, { method: "POST" }); toast("Testnachricht verschickt"); } catch (e) { fail(e); }
+    });
+  });
+  loadCatalog().then((c) => {
+    $("#ha-notify", card).innerHTML = c.notify.map((n) => `<option value="${n}">`).join("");
+    $("#ha-entities", card).innerHTML = c.entities.filter((e) => /^(binary_sensor|input_boolean|calendar|person|group|switch)\./.test(e.id))
+      .map((e) => `<option value="${e.id}">${esc(e.name)}</option>`).join("");
   });
 }
 

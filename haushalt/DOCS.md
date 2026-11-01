@@ -14,7 +14,21 @@ Der farbige Ring um das Symbol zeigt, wie viel vom Rhythmus abgelaufen ist: grü
 
 **Aufwand**: Jede Aufgabe hat einen Standardaufwand. Sobald es seit der letzten Änderung des Standards mindestens 3 Einträge gibt, schlägt die App stattdessen den Median der letzten 10 Einträge vor – auch beim schnellen Abhaken. Wer den Aufwand beim Abhaken korrigiert, bringt der App also bei, wie lange eine Aufgabe wirklich dauert. Der Median reagiert erst, wenn mehrere Einträge abweichen, einzelne Ausreißer verschieben ihn nicht. Im Aufgaben-Editor steht der gelernte Wert neben dem Standard und lässt sich übernehmen; ein neuer Standard startet das Lernen neu.
 
-**Einstellungen**: Personen (Name, Farbe, aktiv), Aufgaben (Symbol, Kategorie, Rhythmus, Aufwand), Kategorien und Export als JSON oder CSV. Aufgaben mit Einträgen werden beim Entfernen archiviert, damit die Statistik erhalten bleibt.
+**Fälligkeit aus Sensoren**: Im Aufgaben-Editor unter „Home Assistant“ kann eine Aufgabe zusätzlich zum Rhythmus auf Entitäten hören. Fällig ist sie, sobald Rhythmus oder Sensor-Regel greift – die Sensor-Regel gilt auch, wenn die Aufgabe noch nie abgehakt wurde.
+
+| Regel | Fällig, wenn | Beispiel |
+|---|---|---|
+| Wert fällt auf die Grenze | eine Entität ≤ Grenze ist | Restlaufzeit von Filter und Bürsten ≤ 0 h |
+| Wert erreicht die Grenze | eine Entität ≥ Grenze ist | 3 Saugvorgänge seit dem Leeren |
+| Zuwachs seit dem Abhaken | der Wert seit dem letzten Abhaken um die Grenze gestiegen ist | 1 kWh am Wasserkocher-Zähler |
+
+Bei mehreren Entitäten reicht eine. Der Ring zeigt, wie nah die Regel an der Grenze ist (bei „fällt auf“ gemessen am höchsten bisher gesehenen Wert).
+
+**Aktion beim Abhaken**: Ein Dienst wie `button.press` oder `counter.reset` mit optionalen Ziel-Entitäten läuft bei jedem neuen Eintrag – so setzt das Abhaken etwa die Verbrauchszähler des Saugroboters zurück.
+
+**Benachrichtigungen**: Unter Einstellungen → Benachrichtigungen bekommt jede Person ihren Dienst (z. B. `notify.mobile_app_iphone`) und es gibt eine Uhrzeit sowie optional „Nur wenn an“ (z. B. `binary_sensor.jemand_zu_hause`) und „Nicht wenn an“ (z. B. `calendar.urlaub`). Aufgaben mit eingeschalteter Benachrichtigung (🔔) melden sich dann einmal am Tag, solange sie fällig sind, bei den in der Aufgabe gewählten Personen. „Erledigt ✅“ in der Nachricht hakt die Aufgabe für diese Person ab und führt die Aktion aus; erledigt jemand die Aufgabe, verschwinden die Nachrichten auf den anderen Geräten.
+
+**Einstellungen**: Personen (Name, Farbe, aktiv), Aufgaben (Symbol, Kategorie, Rhythmus, Aufwand, Home Assistant), Kategorien, Benachrichtigungen und Export als JSON oder CSV. Aufgaben mit Einträgen werden beim Entfernen archiviert, damit die Statistik erhalten bleibt.
 
 ## Konfiguration
 
@@ -25,7 +39,7 @@ Der farbige Ring um das Symbol zeigt, wie viel vom Rhythmus abgelaufen ist: grü
 
 ## Sensoren und Ereignisse
 
-- `sensor.haushalt_faellig`: Anzahl fälliger und überfälliger Aufgaben; Attribut `aufgaben` enthält die Namen.
+- `sensor.haushalt_faellig`: Anzahl fälliger und überfälliger Aufgaben (Rhythmus und Sensor-Regeln); Attribut `aufgaben` enthält die Namen, `details` Name und Status.
 - `sensor.haushalt_<name>_7_tage`: Minuten pro Person in den letzten 7 Tagen; Attribute `aufgaben` und `anteil` (in %).
 - Ereignis `haushalt_erledigt` mit `aufgabe`, `personen`, `minuten`, `zeitpunkt` bei jedem neuen Eintrag.
 
@@ -48,7 +62,7 @@ automation:
           message: "{{ trigger.event.data.von }} sagt {{ trigger.event.data.emoji }} für „{{ trigger.event.data.aufgabe }}“"
 ```
 
-Beispiel: abends erinnern, wenn etwas überfällig ist.
+Beispiel: eigene Sammel-Erinnerung per Automation (alternativ zu den eingebauten Benachrichtigungen).
 
 ```yaml
 automation:

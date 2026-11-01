@@ -3,12 +3,15 @@
 
 Bewusst nur Standardbibliothek: HTTP-Server, SQLite, urllib für die HA-API.
 """
+import base64
 import json
 import logging
 import mimetypes
 import os
 import re
+import socket
 import sqlite3
+import struct
 import threading
 import time
 import unicodedata
@@ -29,6 +32,9 @@ LEARN_MIN = 3  # ab so vielen Einträgen ersetzt der gelernte Wert den Standard
 REACTIONS = ("❤️", "🙏", "👏", "🎉", "💪", "🤩")
 INGRESS_IP = "172.30.32.2"
 CORE_IP = "172.30.32.1"
+SENSOR_MODES = ("below", "above", "increase")
+SOON_FRAC = 0.8  # ab diesem Anteil gilt eine Sensor-Regel als „bald fällig“
+DEFAULT_SETTINGS = {"notify_time": "18:00", "notify_require_on": "", "notify_require_off": "", "notified_on": ""}
 
 log = logging.getLogger("haushalt")
 
@@ -128,6 +134,14 @@ CREATE TABLE IF NOT EXISTS reactions (
   created_at TEXT NOT NULL,
   PRIMARY KEY (completion_id, person_id, emoji)
 );
+CREATE TABLE IF NOT EXISTS settings (
+  key TEXT PRIMARY KEY,
+  value TEXT
+);
+CREATE TABLE IF NOT EXISTS sensor_peaks (
+  entity_id TEXT PRIMARY KEY,
+  peak REAL NOT NULL
+);
 CREATE INDEX IF NOT EXISTS idx_completions_done ON completions(done_at);
 CREATE INDEX IF NOT EXISTS idx_completions_task ON completions(task_id);
 """
@@ -149,7 +163,12 @@ class Store:
             cols = {r[1] for r in self.db.execute("PRAGMA table_info(tasks)")}
             if "minutes_changed_at" not in cols:
                 self.db.execute("ALTER TABLE tasks ADD COLUMN minutes_changed_at TEXT")
-        self.db.execute("PRAGMA user_version = 2")
+        if version < 3:
+            for table, col in (("tasks", "sensor"), ("tasks", "action"), ("tasks", "notify"),
+                               ("completions", "sensor_base"), ("persons", "notify_service")):
+                if col not in {r[1] for r in self.db.execute(f"PRAGMA table_info({table})")}:
+                    self.db.execute(f"ALTER TABLE {table} ADD COLUMN {col} TEXT")
+        self.db.execute("PRAGMA user_version = 3")
 
     def _seed(self):
         with open(SEED) as f:
@@ -177,6 +196,32 @@ class Store:
     def audit(self, actor, action, ref, data=None):
         self.x("INSERT INTO audit (at, actor, action, ref, data) VALUES (?, ?, ?, ?, ?)",
                (now_iso(), actor, action, ref, json.dumps(data, ensure_ascii=False) if data else None))
+
+    # ---- Einstellungen
+
+    def settings(self):
+        out = dict(DEFAULT_SETTINGS)
+        out.update({r["key"]: r["value"] for r in self.q("SELECT * FROM settings")})
+        return out
+
+    def save_settings(self, data, actor):
+        fields = {k: str(data[k] or "").strip() for k in DEFAULT_SETTINGS if k in data and k != "notified_on"}
+        if "notify_time" in fields and not re.fullmatch(r"([01]\d|2[0-3]):[0-5]\d", fields["notify_time"]):
+            raise ApiError(400, "Uhrzeit im Format HH:MM angeben")
+        for k, v in fields.items():
+            self.set_setting(k, v)
+        self.audit(actor, "settings.save", None, fields)
+
+    def set_setting(self, key, value):
+        self.x("INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+               (key, value))
+
+    def peaks(self):
+        return {r["entity_id"]: r["peak"] for r in self.q("SELECT * FROM sensor_peaks")}
+
+    def set_peak(self, entity_id, value):
+        self.x("INSERT INTO sensor_peaks VALUES (?, ?) ON CONFLICT(entity_id) DO UPDATE SET peak = excluded.peak",
+               (entity_id, value))
 
     # ---- Personen
 
@@ -207,9 +252,13 @@ class Store:
         return cur.lastrowid
 
     def update_person(self, pid, data, actor):
-        fields = {k: data[k] for k in ("name", "color", "active") if k in data}
+        fields = {k: data[k] for k in ("name", "color", "active", "notify_service") if k in data}
         if "name" in fields and not str(fields["name"]).strip():
             raise ApiError(400, "Name fehlt")
+        if fields.get("notify_service"):
+            fields["notify_service"] = str(fields["notify_service"]).strip()
+            if not re.fullmatch(r"notify\.[a-z0-9_]+", fields["notify_service"]):
+                raise ApiError(400, "Benachrichtigungsdienst im Format notify.name angeben")
         self._update("persons", pid, fields)
         self.audit(actor, "person.update", pid, fields)
 
@@ -248,7 +297,7 @@ class Store:
         tasks = self.q("SELECT * FROM tasks ORDER BY sort, id")
         last = {}
         for row in self.q(
-                "SELECT c.id, c.task_id, c.done_at FROM completions c"
+                "SELECT c.id, c.task_id, c.done_at, c.sensor_base FROM completions c"
                 " JOIN (SELECT task_id, MAX(done_at) m FROM completions WHERE deleted_at IS NULL GROUP BY task_id) l"
                 " ON l.task_id = c.task_id AND l.m = c.done_at WHERE c.deleted_at IS NULL"):
             last[row["task_id"]] = row
@@ -263,6 +312,9 @@ class Store:
             l = last.get(t["id"])
             t["last_done"] = l["done_at"] if l else None
             t["last_persons"] = persons.get(l["id"], []) if l else []
+            t["last_sensor_base"] = json.loads(l["sensor_base"]) if l and l["sensor_base"] else None
+            for k in ("sensor", "action", "notify"):
+                t[k] = json.loads(t[k]) if t[k] else None
             t["count"] = counts.get(t["id"], 0)
             t["learned_minutes"], t["learned_from"] = self._learned(t, history.get(t["id"], []))
             t["effective_minutes"] = t["learned_minutes"] if t["learned_minutes"] is not None else t["minutes"]
@@ -280,8 +332,8 @@ class Store:
         return int(round(median)), len(values)
 
     def save_task(self, tid, data, actor):
-        fields = {k: data[k] for k in ("name", "icon", "category_id", "minutes", "interval_days", "active", "sort")
-                  if k in data}
+        fields = {k: data[k] for k in ("name", "icon", "category_id", "minutes", "interval_days", "active", "sort",
+                                       "sensor", "action", "notify") if k in data}
         if "name" in fields:
             fields["name"] = str(fields["name"]).strip()
             if not fields["name"]:
@@ -293,6 +345,13 @@ class Store:
                 fields["minutes_changed_at"] = now_iso()  # Lernen beginnt neu ab dem neuen Standard
         if "interval_days" in fields:
             fields["interval_days"] = int(fields["interval_days"]) if fields["interval_days"] else None
+        if "sensor" in fields:
+            fields["sensor"] = self._clean_sensor(fields["sensor"])
+        if "action" in fields:
+            fields["action"] = self._clean_action(fields["action"])
+        if "notify" in fields:
+            n = fields["notify"]
+            fields["notify"] = json.dumps(sorted({int(p) for p in n})) if isinstance(n, list) else None
         if tid is None:
             if "name" not in fields:
                 raise ApiError(400, "Name fehlt")
@@ -305,6 +364,38 @@ class Store:
             self._update("tasks", tid, fields)
         self.audit(actor, "task.save", tid, fields)
         return tid
+
+    @staticmethod
+    def _entities(value):
+        ids = [str(e).strip() for e in (value or []) if str(e).strip()]
+        for e in ids:
+            if not re.fullmatch(r"[a-z_]+\.[a-z0-9_]+", e):
+                raise ApiError(400, f"Ungültige Entität {e!r}")
+        return ids
+
+    def _clean_sensor(self, sensor):
+        """Sensor-Regel: {mode, entities, threshold, base}; ohne Entitäten wird sie entfernt."""
+        if not sensor or not sensor.get("entities"):
+            return None
+        if sensor.get("mode") not in SENSOR_MODES:
+            raise ApiError(400, "Unbekannte Sensor-Regel")
+        out = {"mode": sensor["mode"], "entities": self._entities(sensor["entities"]),
+               "threshold": float(sensor.get("threshold") or 0)}
+        if not out["entities"]:
+            return None
+        if out["mode"] == "increase":
+            if out["threshold"] <= 0:
+                raise ApiError(400, "Zuwachs muss größer als 0 sein")
+            out["base"] = {k: float(v) for k, v in (sensor.get("base") or {}).items() if k in out["entities"]}
+        return json.dumps(out)
+
+    def _clean_action(self, action):
+        if not action or not str(action.get("service") or "").strip():
+            return None
+        service = str(action["service"]).strip()
+        if not re.fullmatch(r"[a-z_]+\.[a-z0-9_]+", service):
+            raise ApiError(400, "Dienst im Format domain.dienst angeben, z. B. button.press")
+        return json.dumps({"service": service, "entities": self._entities(action.get("entities"))})
 
     def delete_task(self, tid, actor):
         """Aufgaben mit Einträgen werden nur archiviert, damit die Statistik erhalten bleibt."""
@@ -397,9 +488,10 @@ class Store:
         else:
             minutes = float(next(t["effective_minutes"] for t in self.tasks() if t["id"] == task["id"]))
         with self.lock:
-            cur = self.x("INSERT INTO completions (task_id, done_at, minutes, note, created_at, created_by)"
-                         " VALUES (?, ?, ?, ?, ?, ?)",
-                         (task["id"], done_at, max(0.0, minutes), str(data.get("note") or ""), now_iso(), actor))
+            base = json.dumps(data["sensor_base"]) if data.get("sensor_base") else None
+            cur = self.x("INSERT INTO completions (task_id, done_at, minutes, note, created_at, created_by, sensor_base)"
+                         " VALUES (?, ?, ?, ?, ?, ?, ?)",
+                         (task["id"], done_at, max(0.0, minutes), str(data.get("note") or ""), now_iso(), actor, base))
             cid = cur.lastrowid
             for pid in ids:
                 self.x("INSERT INTO completion_persons VALUES (?, ?)", (cid, pid))
@@ -468,19 +560,21 @@ class Store:
             "completions": self.completions(include_deleted=True),
             "audit": self.q("SELECT * FROM audit ORDER BY id"),
             "reactions": self.q("SELECT * FROM reactions ORDER BY created_at"),
+            "settings": self.q("SELECT * FROM settings WHERE key != 'notified_on'"),
         }
 
     def import_(self, data, actor):
         """Ersetzt den gesamten Bestand durch einen Export (IDs bleiben erhalten)."""
         tables = {
-            "persons": ("id", "name", "ha_user_id", "color", "active", "created_at"),
+            "persons": ("id", "name", "ha_user_id", "color", "active", "created_at", "notify_service"),
             "categories": ("id", "name", "icon", "sort"),
             "tasks": ("id", "name", "icon", "category_id", "minutes", "interval_days", "active", "sort", "created_at",
-                      "minutes_changed_at"),
+                      "minutes_changed_at", "sensor", "action", "notify"),
             "completions": ("id", "task_id", "done_at", "minutes", "note", "created_at", "created_by",
-                            "deleted_at", "deleted_by"),
+                            "deleted_at", "deleted_by", "sensor_base"),
             "audit": ("id", "at", "actor", "action", "ref", "data"),
             "reactions": ("completion_id", "person_id", "emoji", "created_at"),
+            "settings": ("key", "value"),
         }
         for key in ("persons", "categories", "tasks", "completions"):
             if not isinstance(data.get(key), list):
@@ -488,7 +582,8 @@ class Store:
         with self.lock:
             self.db.execute("BEGIN")
             try:
-                for table in ("reactions", "completion_persons", "completions", "tasks", "categories", "persons", "audit"):
+                for table in ("reactions", "completion_persons", "completions", "tasks", "categories", "persons", "audit",
+                              "settings"):
                     self.db.execute(f"DELETE FROM {table}")
                 for table, cols in tables.items():
                     for row in data.get(table) or []:
@@ -507,14 +602,129 @@ class Store:
 
 # ---------------------------------------------------------------- Home Assistant
 
+def fmt_num(v):
+    """Zahl für Texte: deutsches Komma, echtes Minus, sinnvolle Nachkommastellen."""
+    text = f"{v:.0f}" if abs(v) >= 10 else f"{v:.2f}".rstrip("0").rstrip(".") if abs(v) < 1 else f"{v:.1f}".rstrip("0").rstrip(".")
+    return text.replace(".", ",").replace("-", "−")
+
+
+def interval_due(t, today):
+    """Fälligkeit aus dem Rhythmus (wie due() im Frontend)."""
+    if not t["interval_days"] or not t["last_done"]:
+        return None
+    last = datetime.fromisoformat(t["last_done"].replace("Z", "+00:00")).astimezone().date()
+    elapsed = (today - last).days
+    diff = t["interval_days"] - elapsed
+    frac = min(1, elapsed / t["interval_days"])
+    if diff < 0:
+        return {"status": "overdue", "frac": frac, "label": f"Seit {-diff} {'Tag' if diff == -1 else 'Tagen'} überfällig"}
+    if diff == 0:
+        return {"status": "due", "frac": frac, "label": "Heute fällig"}
+    soon = diff <= max(1, round(t["interval_days"] * 0.2))
+    return {"status": "soon" if soon else "ok", "frac": frac, "label": "Morgen fällig" if diff == 1 else f"Fällig in {diff} Tagen"}
+
+
+RANK = {"overdue": 4, "due": 3, "soon": 2, "ok": 1}
+
+
+def combined_due(t, today):
+    """Dringendere von Rhythmus und Sensor-Regel."""
+    parts = [d for d in (interval_due(t, today), t.get("sensor_state")) if d and d["status"] in RANK]
+    return max(parts, key=lambda d: (RANK[d["status"]], d["frac"])) if parts else None
+
+
+def short_names(names):
+    """Gemeinsamen Gerätenamen am Anfang weglassen („Roborock S5 Max Verbleibende Filterzeit“ → „Verbleibende Filterzeit“)."""
+    words = [n.split() for n in names]
+    if len(words) < 2:
+        return names
+    common = 0
+    while all(len(w) > common + 1 and w[common] == words[0][common] for w in words):
+        common += 1
+    return [" ".join(w[common:]) for w in words]
+
+
+class WebSocket:
+    """Minimaler WebSocket-Client (nur Text-Frames), damit die App ohne Abhängigkeiten auskommt."""
+
+    def __init__(self, host, path, port=80):
+        self.sock = socket.create_connection((host, port), timeout=30)
+        key = base64.b64encode(os.urandom(16)).decode()
+        self.sock.sendall((f"GET {path} HTTP/1.1\r\nHost: {host}\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n"
+                           f"Sec-WebSocket-Key: {key}\r\nSec-WebSocket-Version: 13\r\n\r\n").encode())
+        head = b""
+        while not head.endswith(b"\r\n\r\n"):
+            chunk = self.sock.recv(1)
+            if not chunk:
+                raise ConnectionError("Verbindung beim Handshake geschlossen")
+            head += chunk
+        if b" 101 " not in head.split(b"\r\n", 1)[0]:
+            raise ConnectionError(head.split(b"\r\n", 1)[0].decode(errors="replace"))
+        self.sock.settimeout(120)
+
+    def _read(self, n):
+        buf = b""
+        while len(buf) < n:
+            chunk = self.sock.recv(n - len(buf))
+            if not chunk:
+                raise ConnectionError("Verbindung geschlossen")
+            buf += chunk
+        return buf
+
+    def _send(self, opcode, payload):
+        mask = os.urandom(4)
+        n = len(payload)
+        head = bytes([0x80 | opcode]) + (bytes([0x80 | n]) if n < 126 else
+                                         struct.pack("!BH", 0x80 | 126, n) if n < 65536 else
+                                         struct.pack("!BQ", 0x80 | 127, n))
+        self.sock.sendall(head + mask + bytes(b ^ mask[i % 4] for i, b in enumerate(payload)))
+
+    def send_json(self, data):
+        self._send(0x1, json.dumps(data).encode())
+
+    def recv_json(self):
+        message = b""
+        while True:
+            b1, b2 = self._read(2)
+            n = b2 & 0x7F
+            if n == 126:
+                n = struct.unpack("!H", self._read(2))[0]
+            elif n == 127:
+                n = struct.unpack("!Q", self._read(8))[0]
+            mask = self._read(4) if b2 & 0x80 else None
+            payload = self._read(n)
+            if mask:
+                payload = bytes(b ^ mask[i % 4] for i, b in enumerate(payload))
+            opcode = b1 & 0x0F
+            if opcode == 0x8:
+                raise ConnectionError("Verbindung vom Server geschlossen")
+            if opcode == 0x9:
+                self._send(0xA, payload)
+                continue
+            if opcode in (0x0, 0x1, 0x2):
+                message += payload
+                if b1 & 0x80:
+                    return json.loads(message)
+
+    def close(self):
+        try:
+            self.sock.close()
+        except OSError:
+            pass
+
+
 class HomeAssistant:
-    """Gleicht Personen mit HA ab und veröffentlicht Sensoren und Ereignisse."""
+    """Gleicht Personen mit HA ab, wertet Sensor-Regeln aus, veröffentlicht Sensoren, Ereignisse und Benachrichtigungen."""
 
     def __init__(self, store):
         self.store = store
         self.wake = threading.Event()
         self.enabled = bool(SUPERVISOR_TOKEN)
         self.sensors = OPTIONS.get("sensors", True)
+        self._states, self._states_at = {}, 0
+        self.notified = {}  # task_id → Dienste, die heute eine Nachricht bekommen haben (zum Wegräumen)
+        # Panel-Pfad für Tipp auf die Nachricht: Hostname „f8832456-haushalt“ → „/f8832456_haushalt“
+        self.panel = "/" + os.environ.get("HOSTNAME", "").replace("-", "_") if "-" in os.environ.get("HOSTNAME", "") else None
 
     def call(self, method, path, body=None):
         req = urllib.request.Request(
@@ -525,11 +735,148 @@ class HomeAssistant:
             raw = r.read()
         return json.loads(raw) if raw else None
 
-    def sync_persons(self):
-        for state in self.call("GET", "/states") or []:
-            if state["entity_id"].startswith("person.") and state["attributes"].get("user_id"):
-                attrs = state["attributes"]
-                self.store.ensure_person(attrs["user_id"], attrs.get("friendly_name") or state["entity_id"][7:])
+    def states(self, max_age=15):
+        """Alle Zustände aus HA, kurz zwischengespeichert. Im Dev-Modus optional aus HAUSHALT_DEV_STATES."""
+        if not self.enabled:
+            path = os.environ.get("HAUSHALT_DEV_STATES")
+            if DEV and path and os.path.exists(path):
+                with open(path) as f:
+                    return {s["entity_id"]: s for s in json.load(f)}
+            return {}
+        if time.time() - self._states_at > max_age:
+            try:
+                self._states = {s["entity_id"]: s for s in self.call("GET", "/states") or []}
+                self._states_at = time.time()
+            except Exception as e:  # noqa: BLE001 – lieber alte Werte als gar keine
+                log.warning("Zustände nicht abrufbar: %s", e)
+        return self._states
+
+    @staticmethod
+    def value(state):
+        try:
+            return float(state["state"])
+        except (TypeError, ValueError, KeyError):
+            return None
+
+    def catalog(self):
+        """Entitäten und Benachrichtigungsdienste für die Auswahl im Editor."""
+        domains = ("sensor", "binary_sensor", "counter", "input_number", "number", "button", "input_button", "script",
+                   "switch", "input_boolean", "calendar", "person", "group", "scene")
+        entities = sorted(({"id": e, "name": s["attributes"].get("friendly_name") or e,
+                            "unit": s["attributes"].get("unit_of_measurement") or "", "state": s["state"]}
+                           for e, s in self.states().items() if e.split(".")[0] in domains), key=lambda x: x["id"])
+        notify = []
+        if self.enabled:
+            try:
+                services = {d["domain"]: d["services"] for d in self.call("GET", "/services") or []}
+                notify = sorted(f"notify.{n}" for n in services.get("notify", {})
+                                if n not in ("send_message", "persistent_notification"))
+            except Exception as e:  # noqa: BLE001
+                log.warning("Dienste nicht abrufbar: %s", e)
+        return {"entities": entities, "notify": notify}
+
+    # ---- Sensor-Regeln
+
+    def sensor_state(self, t, states, peaks):
+        rule = t.get("sensor")
+        if not rule:
+            return None
+        thr, mode = rule["threshold"], rule["mode"]
+        base = t.get("last_sensor_base") or rule.get("base") or {}
+        names = short_names([(states.get(e) or {}).get("attributes", {}).get("friendly_name") or e
+                             for e in rule["entities"]])
+        items = []
+        for e, name in zip(rule["entities"], names):
+            st = states.get(e)
+            v = self.value(st)
+            if v is None:
+                continue
+            unit = st["attributes"].get("unit_of_measurement") or ""
+            if mode == "below":
+                peak = peaks.get(e)
+                if peak is None or v > peak:
+                    self.store.set_peak(e, v)
+                    peak = v
+                hit = v <= thr
+                frac = 1 if hit else (peak - v) / (peak - thr) if peak > thr else 0
+                shown = v
+            elif mode == "above":
+                hit = v >= thr
+                frac = 1 if hit else v / thr if thr > 0 else 0
+                shown = v
+            else:
+                b = base.get(e, v)
+                shown = v - b if v >= b else v  # Zähler zurückgesetzt → ab null weiterzählen
+                hit = shown >= thr
+                frac = shown / thr
+            items.append({"name": name, "value": shown, "unit": unit, "hit": hit, "frac": max(0, min(1, frac))})
+        if not items:
+            return {"status": "unknown", "frac": 0, "label": "Sensor nicht verfügbar"}
+        u = lambda i: f"{fmt_num(i['value'])}{' ' + i['unit'] if i['unit'] else ''}"  # noqa: E731
+        with_name = len(items) > 1
+        hits = [i for i in items if i["hit"]]
+        if hits:
+            what = ", ".join(f"{i['name']} {u(i)}" if with_name else u(i) for i in hits)
+            label = f"Fällig: {what}" + (" seit dem Abhaken" if mode == "increase" else "")
+            return {"status": "due", "frac": 1, "label": label, "items": items}
+        top = max(items, key=lambda i: i["frac"])
+        unit = f" {top['unit']}" if top["unit"] else ""
+        if mode == "below":
+            label = f"Noch {u(top)}" + (f" · {top['name']}" if with_name else "")
+        elif mode == "above":
+            label = f"{fmt_num(top['value'])} von {fmt_num(thr)}{unit}" + (f" · {top['name']}" if with_name else "")
+        else:
+            label = f"{fmt_num(top['value'])} von {fmt_num(thr)}{unit} seit dem Abhaken"
+        return {"status": "soon" if top["frac"] >= SOON_FRAC else "ok", "frac": top["frac"], "label": label, "items": items}
+
+    def annotate(self, tasks):
+        if any(t.get("sensor") for t in tasks):
+            states, peaks = self.states(), self.store.peaks()
+            for t in tasks:
+                t["sensor_state"] = self.sensor_state(t, states, peaks)
+        return tasks
+
+    def sensor_base(self, task, keep=None):
+        """Aktuelle Zählerstände für Zuwachs-Regeln (vorhandene Werte aus keep bleiben)."""
+        rule = task.get("sensor") if task else None
+        if not rule or rule.get("mode") != "increase":
+            return None
+        states = self.states(max_age=0)
+        out = dict(keep or {})
+        for e in rule.get("entities") or []:
+            v = self.value(states.get(e))
+            if e not in out and v is not None:
+                out[e] = v
+        return out or None
+
+    # ---- Abhaken: Aktion, Ereignis, Nachrichten wegräumen
+
+    def after_change(self, completion=None):
+        self.wake.set()
+        if completion:
+            threading.Thread(target=self.on_completion, args=(completion,), daemon=True).start()
+
+    def on_completion(self, completion):
+        task = next((t for t in self.store.tasks() if t["id"] == completion["task_id"]), {})
+        names = {p["id"]: p["name"] for p in self.store.persons()}
+        self.fire("haushalt_erledigt", {
+            "aufgabe": task.get("name"), "personen": [names.get(i) for i in completion["person_ids"]],
+            "minuten": completion["minutes"], "zeitpunkt": completion["done_at"],
+        })
+        if not self.enabled:
+            return
+        action = task.get("action")
+        if action:
+            domain, service = action["service"].split(".", 1)
+            try:
+                self.call("POST", f"/services/{domain}/{service}",
+                          {"entity_id": action["entities"]} if action["entities"] else {})
+                log.info("Aktion %s für %s ausgeführt", action["service"], task.get("name"))
+            except Exception as e:  # noqa: BLE001
+                log.warning("Aktion %s fehlgeschlagen: %s", action["service"], e)
+        for service in self.notified.pop(task.get("id"), set()):
+            self.notify(service, {"message": "clear_notification", "data": {"tag": f"haushalt_{task['id']}"}})
+        self._states_at = 0  # Sensoren haben sich durch die Aktion vermutlich geändert
 
     def fire(self, event, data):
         if not self.enabled:
@@ -539,19 +886,138 @@ class HomeAssistant:
         except Exception as e:  # noqa: BLE001 – HA nicht erreichbar darf die App nicht stören
             log.warning("Ereignis %s fehlgeschlagen: %s", event, e)
 
+    # ---- Benachrichtigungen
+
+    def notify(self, service, payload):
+        try:
+            self.call("POST", f"/services/notify/{service.split('.', 1)[1]}", payload)
+            return True
+        except Exception as e:  # noqa: BLE001
+            log.warning("Benachrichtigung über %s fehlgeschlagen: %s", service, e)
+            return False
+
+    def push(self, person, title, message, tag=None, actions=None):
+        data = {}
+        if tag:
+            data["tag"] = tag
+        if actions:
+            data["actions"] = actions
+        if self.panel:
+            data["url"] = self.panel
+            data["clickAction"] = self.panel
+        return self.notify(person["notify_service"], {"title": title, "message": message, "data": data})
+
+    def maybe_notify(self):
+        """Einmal am Tag zur eingestellten Uhrzeit (bis 3 Stunden danach, falls die App gerade neu startet)."""
+        st = self.store.settings()
+        now = datetime.now().astimezone()
+        today = now.date().isoformat()
+        if st["notified_on"] == today:
+            return
+        hh, mm = map(int, st["notify_time"].split(":"))
+        at = now.replace(hour=hh, minute=mm, second=0, microsecond=0)
+        if not at <= now < at + timedelta(hours=3):
+            return
+        self.store.set_setting("notified_on", today)
+        states = self.states(max_age=0)
+        need_on, need_off = st["notify_require_on"], st["notify_require_off"]
+        if need_on and (states.get(need_on) or {}).get("state") not in ("on", "home"):
+            log.info("Keine Benachrichtigung: %s ist nicht an", need_on)
+            return
+        if need_off and (states.get(need_off) or {}).get("state") in ("on", "home"):
+            log.info("Keine Benachrichtigung: %s ist an", need_off)
+            return
+        self.notify_due()
+
+    def notify_due(self):
+        persons = {p["id"]: p for p in self.store.persons() if p["active"] and p["notify_service"]}
+        today = datetime.now().astimezone().date()
+        sent = 0
+        for t in self.annotate(self.store.tasks()):
+            d = combined_due(t, today)
+            if not t["active"] or not t["notify"] or not d or d["status"] not in ("due", "overdue"):
+                continue
+            for pid in t["notify"]:
+                p = persons.get(pid)
+                if p and self.push(p, f"⏰ {t['icon']} {t['name']}".replace("  ", " "), d["label"],
+                                   tag=f"haushalt_{t['id']}",
+                                   actions=[{"action": f"HAUSHALT_DONE_{t['id']}_{pid}", "title": "Erledigt ✅"}]):
+                    self.notified.setdefault(t["id"], set()).add(p["notify_service"])
+                    sent += 1
+        log.info("%s Benachrichtigungen verschickt", sent)
+
+    def on_action(self, action):
+        """Erledigt-Knopf aus einer Benachrichtigung."""
+        m = re.fullmatch(r"HAUSHALT_DONE_(\d+)_(\d+)", action or "")
+        if not m:
+            return
+        tid, pid = int(m.group(1)), int(m.group(2))
+        task = next((t for t in self.annotate(self.store.tasks()) if t["id"] == tid), None)
+        p = next((p for p in self.store.persons() if p["id"] == pid), None)
+        if not task or not p:
+            return
+        d = combined_due(task, datetime.now().astimezone().date())
+        if not d or d["status"] not in ("due", "overdue"):
+            log.info("%s ist schon erledigt, Knopf von %s ignoriert", task["name"], p["name"])
+            for service in self.notified.pop(tid, set()):
+                self.notify(service, {"message": "clear_notification", "data": {"tag": f"haushalt_{tid}"}})
+            return
+        data = {"task_id": tid, "person_ids": [pid], "sensor_base": self.sensor_base(task)}
+        completion = self.store.create_completion(data, p["name"])
+        log.info("%s per Benachrichtigung von %s erledigt", task["name"], p["name"])
+        self.after_change(completion)
+
+    def listen(self):
+        """Hört über die WebSocket-API auf Antworten aus Benachrichtigungen."""
+        while True:
+            ws = None
+            try:
+                ws = WebSocket("supervisor", "/core/websocket")
+                ws.recv_json()
+                ws.send_json({"type": "auth", "access_token": SUPERVISOR_TOKEN})
+                if ws.recv_json().get("type") != "auth_ok":
+                    raise ConnectionError("Anmeldung an der WebSocket-API fehlgeschlagen")
+                ws.send_json({"id": 1, "type": "subscribe_events", "event_type": "mobile_app_notification_action"})
+                log.info("Höre auf Antworten aus Benachrichtigungen")
+                n, idle = 1, 0
+                while True:
+                    try:
+                        msg = ws.recv_json()
+                        idle = 0
+                    except socket.timeout:
+                        idle += 1
+                        if idle > 1:
+                            raise ConnectionError("keine Antwort auf Ping")
+                        n += 1
+                        ws.send_json({"id": n, "type": "ping"})
+                        continue
+                    if msg.get("type") == "event":
+                        try:
+                            self.on_action(msg["event"]["data"].get("action"))
+                        except Exception:  # noqa: BLE001
+                            log.exception("Antwort aus Benachrichtigung nicht verarbeitet")
+            except Exception as e:  # noqa: BLE001
+                log.warning("WebSocket getrennt: %s", e)
+            finally:
+                if ws:
+                    ws.close()
+            time.sleep(20)
+
+    # ---- Sensoren in HA
+
+    def sync_persons(self):
+        for state in self.call("GET", "/states") or []:
+            if state["entity_id"].startswith("person.") and state["attributes"].get("user_id"):
+                attrs = state["attributes"]
+                self.store.ensure_person(attrs["user_id"], attrs.get("friendly_name") or state["entity_id"][7:])
+
     def publish(self):
         local_today = datetime.now().astimezone().date()
         due = []
-        for t in self.store.tasks():
-            if not t["active"] or not t["interval_days"]:
-                continue
-            if not t["last_done"]:  # Rhythmus beginnt erst mit dem ersten Abhaken
-                continue
-            last = datetime.fromisoformat(t["last_done"].replace("Z", "+00:00")).astimezone().date()
-            next_due = last + timedelta(days=t["interval_days"])
-            if next_due <= local_today:
-                due.append({"name": t["name"], "since_days": (local_today - next_due).days})
-        due.sort(key=lambda d: -d["since_days"])
+        for t in self.annotate(self.store.tasks()):
+            d = combined_due(t, local_today) if t["active"] else None
+            if d and d["status"] in ("due", "overdue"):
+                due.append({"name": t["name"], "status": d["label"]})
         self.call("POST", "/states/sensor.haushalt_faellig", {
             "state": len(due),
             "attributes": {"friendly_name": "Haushalt fällig", "icon": "mdi:broom", "unit_of_measurement": "Aufgaben",
@@ -576,18 +1042,22 @@ class HomeAssistant:
         if not self.enabled:
             log.info("Kein SUPERVISOR_TOKEN – HA-Anbindung deaktiviert")
             return
-        last_sync = 0
+        threading.Thread(target=self.listen, daemon=True).start()
+        last_sync = last_publish = 0
         while True:
+            woken = self.wake.is_set()
+            self.wake.clear()
             try:
                 if time.time() - last_sync > 600:
                     self.sync_persons()
                     last_sync = time.time()
-                if self.sensors:
+                if self.sensors and (woken or time.time() - last_publish > 300):
                     self.publish()
+                    last_publish = time.time()
+                self.maybe_notify()
             except Exception as e:  # noqa: BLE001
                 log.warning("HA-Abgleich fehlgeschlagen: %s", e)
-            self.wake.wait(300)
-            self.wake.clear()
+            self.wake.wait(60)
 
 
 # ---------------------------------------------------------------- HTTP
@@ -694,8 +1164,16 @@ class Handler(BaseHTTPRequestHandler):
         rid = int(rest[0]) if rest and rest[0].isdigit() else None
 
         if head == "state" and method == "GET":
-            return {"me": me, "persons": s.persons(), "categories": s.categories(), "tasks": s.tasks(),
-                    "reaction_set": list(REACTIONS)}
+            return {"me": me, "persons": s.persons(), "categories": s.categories(),
+                    "tasks": self.ha.annotate(s.tasks()), "reaction_set": list(REACTIONS), "settings": s.settings(),
+                    "ha": self.ha.enabled or bool(os.environ.get("HAUSHALT_DEV_STATES"))}
+
+        if head == "settings" and method == "PATCH":
+            s.save_settings(self.body(), actor)
+            return s.settings()
+
+        if head == "ha" and rest == ["catalog"] and method == "GET":
+            return self.ha.catalog()
 
         if head == "completions":
             if method == "GET":
@@ -709,6 +1187,8 @@ class Handler(BaseHTTPRequestHandler):
                     if not me:
                         raise ApiError(400, "person_ids oder person angeben")
                     data["person_ids"] = [me["id"]]
+                task = next((t for t in s.tasks() if t["id"] == int(data.get("task_id") or 0)), None)
+                data["sensor_base"] = self.ha.sensor_base(task)
                 result = s.create_completion(data, actor)
                 self.after_change(result)
                 return result
@@ -732,10 +1212,15 @@ class Handler(BaseHTTPRequestHandler):
             return result
 
         if head == "tasks":
+            if method in ("POST", "PATCH"):
+                body = self.body()
+                sensor = body.get("sensor")
+                if sensor and sensor.get("mode") == "increase":  # Startwert, falls noch nie abgehakt wurde
+                    sensor["base"] = self.ha.sensor_base({"sensor": sensor}, keep=sensor.get("base")) or {}
             if method == "POST" and rid is None:
-                result = {"id": s.save_task(None, self.body(), actor)}
+                result = {"id": s.save_task(None, body, actor)}
             elif method == "PATCH" and rid:
-                result = {"id": s.save_task(rid, self.body(), actor)}
+                result = {"id": s.save_task(rid, body, actor)}
             elif method == "DELETE" and rid:
                 result = {"result": s.delete_task(rid, actor)}
             else:
@@ -758,6 +1243,13 @@ class Handler(BaseHTTPRequestHandler):
             elif method == "PATCH" and rid:
                 s.update_person(rid, self.body(), actor)
                 result = {"id": rid}
+            elif method == "POST" and rid and rest[1:] == ["test"]:
+                p = next((p for p in s.persons() if p["id"] == rid), None)
+                if not p or not p["notify_service"]:
+                    raise ApiError(400, "Kein Benachrichtigungsdienst eingetragen")
+                if not self.ha.push(p, "🏠 Haushalt", f"Test für {p['name']}: Benachrichtigungen kommen an."):
+                    raise ApiError(502, "Home Assistant hat die Nachricht nicht angenommen")
+                return {"result": "sent"}
             else:
                 raise ApiError(404, "Unbekannter Pfad")
             self.after_change()
@@ -801,14 +1293,7 @@ class Handler(BaseHTTPRequestHandler):
         })).start()
 
     def after_change(self, completion=None):
-        self.ha.wake.set()
-        if completion:
-            task = next((t for t in self.store.tasks() if t["id"] == completion["task_id"]), {})
-            names = {p["id"]: p["name"] for p in self.store.persons()}
-            threading.Thread(target=self.ha.fire, daemon=True, args=("haushalt_erledigt", {
-                "aufgabe": task.get("name"), "personen": [names.get(i) for i in completion["person_ids"]],
-                "minuten": completion["minutes"], "zeitpunkt": completion["done_at"],
-            })).start()
+        self.ha.after_change(completion)
 
 
 def main():

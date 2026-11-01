@@ -424,3 +424,24 @@ p { margin: 0 0 10px; font-size: 14px; }
 .more-thanks { margin-top: 8px; }
 .learn { display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap; font-size: 13px; background: var(--surface-2); border-radius: 10px; padding: 8px 10px; }
 .learn b { font-weight: 650; }
+
+/* ---- Home Assistant im Aufgaben-Editor */
+
+.ha-block { border: 1px solid var(--border); border-radius: 12px; padding: 10px 12px; }
+.ha-block[open] { display: flex; flex-direction: column; gap: 12px; }
+.ha-block summary { cursor: pointer; font-weight: 600; font-size: 14px; }
+.ha-block summary .muted { font-weight: 400; margin-left: 4px; }
+.ha-block [data-sensor] { display: flex; flex-direction: column; gap: 12px; }
+.ha-block [hidden] { display: none !important; }
+.field > span em { font-style: normal; font-weight: 400; }
+.entity-row { display: flex; gap: 6px; align-items: flex-start; margin-bottom: 6px; }
+.entity-in { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.entity-in input, .ha-block input[type="text"], .ha-block input[type="number"] { width: 100%; }
+.entity-in small { font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ha-flags { display: inline-flex; gap: 2px; }
+.field input[type="time"] { border: 1px solid var(--border); background: var(--surface); border-radius: 10px; padding: 8px 10px; }
+[data-notify-card] .grid2 { flex-wrap: wrap; margin-bottom: 8px; }
+[data-notify-card] .grid2 .field { min-width: 160px; }
+[data-notify-card] .grid2 input { width: 100%; }
+.notify-name { width: 80px; font-weight: 550; }
+@media (max-width: 640px) { .grid2:has([name="notify_time"]) { flex-direction: column; } }
