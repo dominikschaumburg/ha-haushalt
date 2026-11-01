@@ -86,7 +86,8 @@
       ["Einkaufen (groß)", "🛒", 60, null, []],
       ["Essensplan erstellen", "📝", 15, 7, []],
       ["Meal Prep", "🥡", 90, null, []],
-      ["Brot backen", "🍞", 30, null, []]
+      ["Brot backen", "🍞", 30, null, []],
+      ["Kuchen backen", "🍰", 60, null, []]
     ]},
     {"name": "Pflanzen", "icon": "🪴", "tasks": [
       ["Pflanzen gießen", "🪴", 10, 4, []],

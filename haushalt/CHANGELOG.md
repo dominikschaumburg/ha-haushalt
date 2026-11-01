@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.8.5
+
+- Neue Vorlage „Kuchen backen“ (Einkauf & Kochen) neben „Brot backen“.
+
 ## 1.8.4
 
 - Sensor-Regeln mit An/Aus-Meldern (z. B. „Wäsche wartet“): Wer nach dem Einschalten abhakt, erledigt die Aufgabe, bis der Melder erneut auslöst. Bisher blieb sie fällig, solange der Melder an war.
