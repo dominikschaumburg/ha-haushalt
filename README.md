@@ -16,6 +16,8 @@ Wer hat zuletzt das Bad geputzt? Wer bringt eigentlich immer den Müll runter? *
 - **Aufwand und Kategorien**: Jede Aufgabe hat einen realistischen Zeitaufwand und eine Kategorie, damit sich die investierte Zeit auswerten lässt. Der vorgeschlagene Aufwand lernt aus den letzten Einträgen (Median).
 - **Statistik**: Anteile pro Person, Wochen- und Monatstrends, Aktivitäts-Heatmaps pro Person, „Wer macht was?“ nach Kategorie und Aufgabe sowie Wochentagsprofile, wahlweise nach Zeit oder Anzahl.
 - **Passt zu Home Assistant**: eigener Eintrag in der Seitenleiste, übernimmt hellen/dunklen Modus, funktioniert in der Companion-App am Handy.
+- **Home Assistant als Taktgeber**: Aufgaben können über Sensoren fällig werden (Restlaufzeit, Zähler, Verbrauch seit dem Abhaken), beim Abhaken einen Dienst ausführen und per Push mit „Erledigt“-Knopf erinnern. Rhythmus und Aufwand lernen aus euren Einträgen.
+- **Vorlagen nach Räumen und Geräten**: Über 80 Aufgaben zum Anhaken, Vorschläge passend zu den Bereichen und erkannten Geräten in Home Assistant.
 - **Sensoren und Ereignisse**: `sensor.haushalt_faellig` (Anzahl fälliger Aufgaben) und `sensor.haushalt_<name>_7_tage` (Minuten pro Person, letzte 7 Tage) sowie die Ereignisse `haushalt_erledigt` und `haushalt_reaktion` für eigene Automationen.
 
 ![Statistik](docs/stats.png)
@@ -24,7 +26,7 @@ Wer hat zuletzt das Bad geputzt? Wer bringt eigentlich immer den Müll runter? *
 
 1. Auf den Button oben klicken, oder in Home Assistant unter **Einstellungen → Apps → App Store → ⋮ → Repositories** `https://github.com/dominikschaumburg/ha-haushalt` hinzufügen.
 2. **Haushalt** installieren, starten und „In Seitenleiste anzeigen“ aktivieren.
-3. Fertig. Personen werden aus den Home-Assistant-Personen mit Benutzerkonto angelegt; ein Startset mit 26 typischen Aufgaben ist bereits angelegt und unter **Einstellungen** anpassbar.
+3. Haushalt öffnen und den „Ersten Schritten“ folgen: Personen kommen aus den Home-Assistant-Personen mit Benutzerkonto, die Handys für Benachrichtigungen werden automatisch zugeordnet, und unter **Vorlagen** gibt es Aufgaben passend zu euren Räumen und Geräten – z. B. Saugroboter-Wartung, die beim Abhaken die Verbrauchszähler zurücksetzt. Ein Startset typischer Aufgaben ist schon angelegt.
 
 Details zu Konfiguration, Sensoren und zum Abhaken aus Automationen stehen in der [Dokumentation](haushalt/DOCS.md).
 

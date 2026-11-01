@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.8.0
+
+- Einfacher einrichten: „Erste Schritte“ auf der Aufgabenseite (Personen, Benachrichtigungen, Vorlagen), bis man sie mit „Fertig“ schließt.
+- Benachrichtigungsdienste werden automatisch zugeordnet – über die Tracker der HA-Person oder ein Gerät der Companion-App, das nach der Person heißt („iPhone von Sarah“). Ein bewusst geleertes Feld bleibt leer.
+- Benachrichtigungen standardmäßig nur, wenn jemand zu Hause ist (`zone.home`); „Nur wenn an“ akzeptiert auch Zahlen größer 0.
+- Saugroboter-Vorlage „leeren“ nutzt einen Behälter-Sensor der Integration, falls vorhanden.
+
 ## 1.7.0
 
 - Aufgaben aus Vorlagen (Einstellungen → Aufgaben → „Aus Vorlagen …“): Katalog mit über 80 typischen Aufgaben samt Rhythmus und Aufwand.

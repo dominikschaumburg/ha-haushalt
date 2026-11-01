@@ -36,8 +36,9 @@ INGRESS_IP = "172.30.32.2"
 CORE_IP = "172.30.32.1"
 SENSOR_MODES = ("below", "above", "increase")
 SOON_FRAC = 0.8  # ab diesem Anteil gilt eine Sensor-Regel als „bald fällig“
-DEFAULT_SETTINGS = {"notify_time": "18:00", "notify_require_on": "", "notify_require_off": "", "notify_done": "",
-                    "notified_on": ""}
+# zone.home zählt die Personen zu Hause und existiert in jeder Installation
+DEFAULT_SETTINGS = {"notify_time": "18:00", "notify_require_on": "zone.home", "notify_require_off": "", "notify_done": "",
+                    "onboarding_done": "", "notified_on": ""}
 DONE_NOTIFY_HOURS = 6  # nachgetragene Einträge, die älter sind, lösen keine Erledigt-Nachricht aus
 
 log = logging.getLogger("haushalt")
@@ -265,8 +266,9 @@ class Store:
         fields = {k: data[k] for k in ("name", "color", "active", "notify_service") if k in data}
         if "name" in fields and not str(fields["name"]).strip():
             raise ApiError(400, "Name fehlt")
+        if "notify_service" in fields:
+            fields["notify_service"] = str(fields["notify_service"] or "").strip()
         if fields.get("notify_service"):
-            fields["notify_service"] = str(fields["notify_service"]).strip()
             if not re.fullmatch(r"notify\.[a-z0-9_]+", fields["notify_service"]):
                 raise ApiError(400, "Benachrichtigungsdienst im Format notify.name angeben")
         self._update("persons", pid, fields)
@@ -846,9 +848,7 @@ class HomeAssistant:
         notify = []
         if self.enabled:
             try:
-                services = {d["domain"]: d["services"] for d in self.call("GET", "/services") or []}
-                notify = sorted(f"notify.{n}" for n in services.get("notify", {})
-                                if n not in ("send_message", "persistent_notification"))
+                notify = sorted(self.notify_services())
             except Exception as e:  # noqa: BLE001
                 log.warning("Dienste nicht abrufbar: %s", e)
         return {"entities": entities, "notify": notify}
@@ -1021,10 +1021,10 @@ class HomeAssistant:
         self.store.set_setting("notified_on", today)
         states = self.states(max_age=0)
         need_on, need_off = st["notify_require_on"], st["notify_require_off"]
-        if need_on and (states.get(need_on) or {}).get("state") not in ("on", "home"):
+        if need_on and not (self.value(states.get(need_on)) or 0) > 0:
             log.info("Keine Benachrichtigung: %s ist nicht an", need_on)
             return
-        if need_off and (states.get(need_off) or {}).get("state") in ("on", "home"):
+        if need_off and (self.value(states.get(need_off)) or 0) > 0:
             log.info("Keine Benachrichtigung: %s ist an", need_off)
             return
         self.notify_due()
@@ -1105,11 +1105,43 @@ class HomeAssistant:
 
     # ---- Sensoren in HA
 
+    def notify_services(self):
+        services = {d["domain"]: d["services"] for d in self.call("GET", "/services") or []}
+        return {f"notify.{n}" for n in services.get("notify", {}) if n not in ("send_message", "persistent_notification")}
+
     def sync_persons(self):
+        """Personen aus HA anlegen und ihnen den Dienst ihrer Companion-App zuordnen (notify.mobile_app_<tracker>)."""
+        services = None
         for state in self.call("GET", "/states") or []:
-            if state["entity_id"].startswith("person.") and state["attributes"].get("user_id"):
-                attrs = state["attributes"]
-                self.store.ensure_person(attrs["user_id"], attrs.get("friendly_name") or state["entity_id"][7:])
+            if not (state["entity_id"].startswith("person.") and state["attributes"].get("user_id")):
+                continue
+            attrs = state["attributes"]
+            person = self.store.ensure_person(attrs["user_id"], attrs.get("friendly_name") or state["entity_id"][7:])
+            if person["notify_service"] is not None:  # schon gesetzt oder bewusst geleert ("")
+                continue
+            services = self.notify_services() if services is None else services
+            service = self.guess_notify(person, attrs.get("device_trackers") or [], services)
+            if service:
+                self.store.update_person(person["id"], {"notify_service": service}, "Home Assistant")
+                log.info("Benachrichtigungen für %s über %s", person["name"], service)
+
+    def guess_notify(self, person, trackers, services):
+        """Dienst der Companion-App: über die Tracker der Person, sonst über ein Gerät, das nach ihr heißt."""
+        used = {p["notify_service"] for p in self.store.persons() if p["notify_service"]}
+        free = sorted(x for x in services if x.startswith("notify.mobile_app_") and x not in used)
+        for tracker in trackers:
+            service = "notify.mobile_app_" + tracker.split(".", 1)[1]
+            if service in free:
+                return service
+        first = slugify(person["name"]).split("_")[0]
+        entities = self.context()["entities"]
+        for service in free:
+            obj = service[len("notify.mobile_app_"):]
+            names = {i["device_name"] for e, i in entities.items() if i["device_name"]
+                     and (e.split(".", 1)[1] == obj or e.split(".", 1)[1].startswith(obj + "_"))}
+            if any(first in slugify(n).split("_") for n in names):  # „iPhone von Sarah“
+                return service
+        return None
 
     def publish(self):
         local_today = datetime.now().astimezone().date()
@@ -1220,8 +1252,12 @@ def detect_devices(states, ctx):
                 reason=f"Fällig, sobald ein Verschleißteil abgelaufen ist ({len(cons)} Zähler)"
                        + (", Abhaken setzt die Zähler zurück" if resets
                           else ". Tipp: Reset-Knöpfe der Integration aktivieren und als Aktion ergänzen")))
+        bins = sorted(x for x in group if x.startswith("binary_sensor.")
+                      and re.search(r"bin|behalter|behaelter|dust|staub|_full|_voll", x))
         items.append(template_item(f"{name} leeren", "🤖", "Putzen", 3, 7, "🧽", match_words=[first, "leeren"], area_id=area(e),
-                                   reason="Behälter des Saugroboters, wöchentlich"))
+                                   sensor={"mode": "above", "entities": bins[:1], "threshold": 1} if bins else None,
+                                   reason=f"Wöchentlich oder sobald „{fname(bins[0])}“ meldet" if bins
+                                          else "Behälter des Saugroboters, wöchentlich"))
 
     flags = [e for e in states if e.split(".")[0] in ("input_boolean", "binary_sensor")
              and re.search(r"wartet|fertig|finished|done|complete|ausraum|leeren", e)]

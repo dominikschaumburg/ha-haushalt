@@ -197,6 +197,7 @@ async function renderTasks(el) {
   groups.sort((a, b) => b.total - a.total);
 
   el.innerHTML = `
+    ${onboardingCard()}
     ${weekCard(week)}
     ${thanksCard(recent)}
     <div class="search"><input type="search" placeholder="Aufgabe suchen …" value="${esc(S.search)}" aria-label="Aufgabe suchen"></div>
@@ -220,9 +221,30 @@ async function renderTasks(el) {
     setTimeout(() => renderTasks(el), 300);
   }));
   $("[data-goto-history]", el)?.addEventListener("click", () => go("history"));
+  $("[data-onb-settings]", el)?.addEventListener("click", () => go("settings"));
+  $("[data-onb-templates]", el)?.addEventListener("click", () => openTemplates());
+  $("[data-onb-done]", el)?.addEventListener("click", async () => {
+    try { S.settings = await api("settings", { method: "PATCH", body: { onboarding_done: "1" } }); renderTasks(el); } catch (e) { fail(e); }
+  });
   bindChips($(".rooms", el) || document.createElement("div"), () => { S.room = chipValues(el, "room")[0]; localSet("room", S.room); renderTasks(el); });
   el.querySelectorAll("[data-check]").forEach((b) => b.addEventListener("click", () => quickDone(+b.dataset.check, b)));
   el.querySelectorAll("[data-open]").forEach((b) => b.addEventListener("click", () => openLog({ taskId: +b.dataset.open })));
+}
+
+/** Checkliste beim ersten Öffnen: Personen, Benachrichtigungen, Vorlagen. */
+function onboardingCard() {
+  if (!S.ha || S.settings.onboarding_done === "1") return "";
+  const people = activePersons();
+  const linked = people.filter((p) => p.notify_service);
+  const step = (ok, html) => `<li class="${ok ? "ok" : ""}"><span class="onb-mark">${ok ? "✓" : "•"}</span><span>${html}</span></li>`;
+  return `<section class="card onboarding">
+    <div class="card-head"><h2>Erste Schritte</h2><button class="btn ghost sm" data-onb-done>Fertig</button></div>
+    <ol class="onb">
+      ${step(people.length > 0, people.length ? `Personen aus Home Assistant: <b>${people.map((p) => esc(p.name)).join(", ")}</b>` : "Noch keine Personen – in Home Assistant Personen mit Benutzerkonto anlegen")}
+      ${step(linked.length === people.length && people.length, `Benachrichtigungen: ${linked.length} von ${people.length} Personen mit Handy verknüpft (Companion-App) <button class="btn ghost sm" data-onb-settings>Einstellungen</button>`)}
+      ${step(false, `Aufgaben passend zu euren Räumen und Geräten <button class="btn ghost sm" data-onb-templates>Vorlagen ansehen</button>`)}
+    </ol>
+  </section>`;
 }
 
 function weekCard(rows) {
@@ -1131,7 +1153,7 @@ function bindNotifyCard(el) {
   card.querySelectorAll("[data-notify-person]").forEach((row) => {
     const id = +row.dataset.notifyPerson;
     $("input", row).addEventListener("change", async (e) => {
-      try { await api(`persons/${id}`, { method: "PATCH", body: { notify_service: e.target.value.trim() || null } }); await loadState(); renderSettings(el); } catch (err) { fail(err); }
+      try { await api(`persons/${id}`, { method: "PATCH", body: { notify_service: e.target.value.trim() } }); await loadState(); renderSettings(el); } catch (err) { fail(err); }
     });
     $("[data-test]", row).addEventListener("click", async () => {
       try { await api(`persons/${id}/test`, { method: "POST" }); toast("Testnachricht verschickt"); } catch (e) { fail(e); }
